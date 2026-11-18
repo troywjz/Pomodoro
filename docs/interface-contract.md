@@ -1,6 +1,6 @@
 # 模块接口与数据契约提案
 
-> 候选版本 `M0-Contracts v1.0.1`，状态：待产品语义输入及用户发布/许可决策。本文是公共技术字段和时序的唯一候选字段来源；行为含义依赖产品与交互设计交付。业务实现与 Windows 实测尚未开始。
+> 候选版本 `M0-Contracts v1.0.1`，状态：待产品语义输入及用户对 M0 候选技术路线/完整设计的批准，并待 M1 启动授权。本文是公共技术字段和时序的唯一候选字段来源；行为含义依赖产品与交互设计交付。Cargo 工程、业务源码和实现型试验在 M1 获批后启动；工程细节依据获批后的验证证据收敛。
 
 ## 1. 约定与所有权
 
@@ -59,7 +59,7 @@ Migration 在接受业务命令前执行：一致性备份成功后在事务内�
 
 `GeometryRequest` 输入为物理显示器宽度 `monitor_width_px` 与缩放比例 `dpi/96`；输出目标物理宽度按 `floor(width_px/10 + 0.5)`，再换算 DIP。展开/收起消费同一宽度。产品已确定展开/收起同宽、所在显示器物理宽度10%的方向；本契约沿用该决定。显示器中心点/跨屏事件顺序、API坐标空间与 DPI 边界行为属于工程接口细节，待 Windows 实测。
 
-SQLite 候选单库包含 settings、active_session、session_history、schema_meta；历史 session_id 唯一，revision CAS 在事务内执行。备份采用 SQLite 一致性备份 API/在线备份机制，禁止直接复制活动 WAL 数据库主文件。删除与导出先使用一致性读快照；各自内容范围由产品输入定义。
+SQLite 候选单库包含 settings、active_session、session_history、schema_meta、command_receipts；历史 session_id 唯一，revision CAS 在事务内执行。备份采用 SQLite 一致性备份 API/在线备份机制，禁止直接复制活动 WAL 数据库主文件。删除与导出先使用一致性读快照；各自内容范围由产品输入定义。
 
 ## 6. 依赖边界与模块引用
 
@@ -85,5 +85,6 @@ Domain 不依赖 Slint、Windows、SQLite；UI 不访问 storage/platform API；
 
 - 内部来源：PR #21 基线 `4dcefb23035017571d0e134e7a370401b279f1f9`；分配修订 `e35f5f2d7ddda901e4839338ff308077d3427a82`；产品草案 `docs/product/requirements-v0.2.md`；原候选 `docs/contracts/review-packet.md`；X5–X8 `docs/quality/review-register.md`。
 - 官方资料（核对日 2026-11-18）：[Rust releases](https://doc.rust-lang.org/releases.html)、[Slint license FAQ](https://slint.dev/faqs)、[Slint getting started/licensing](https://slint.dev/get-started)、[Slint backends/renderers](https://docs.slint.dev/latest/docs/slint/guide/backends-and-renderers/backends_and_renderers/)、[Slint font handling](https://docs.slint.dev/latest/docs/slint/guide/development/fonts/)、[Slint 1.19 release](https://slint.dev/blog/slint-1.19-released)、[Slint Windows packaging / Skia ICU](https://docs.slint.dev/latest/docs/slint/guide/platforms/desktop/windows/packaging/)、[SQLite synchronous pragma](https://www.sqlite.org/pragma.html)、[SQLite WAL](https://www.sqlite.org/wal.html)、[rusqlite bundled 文档](https://docs.rs/crate/libsqlite3-sys/0.38.2)。版本和许可须随实际 Cargo 锁定文件及发行组合再次核对。
+- M1 门槛：产品语义输入到位；用户批准 M0 候选技术路线与完整设计并明确授权启动 M1。授权后创建 Cargo 工程、业务源码和实现型试验，开展 renderer、工具链、SQLite durability、Windows/Hyper-V 工程验证；依据结果收敛版本和配置细节，再提交架构审批。
 - 产品输入依赖：统计字段含义/outcome 与日期归属；清理类型、确认/取消时序和部分失败策略；导出包含内容、格式列、隐私及恢复边界；Idle目标语义与完成轮次规则。负责组：产品与交互设计；Lead 统一裁决记录。
 - Windows 待验证：时钟采样/睡眠信号、DPI/多屏几何、主题订阅、退出和强杀故障恢复、WAL 文件系统持久性、打包 renderer 与辅助技术。

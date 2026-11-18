@@ -1,6 +1,6 @@
 # 模块责任与依赖
 
-状态：`M0-Contracts v1.0.1` 候选；待产品输入及用户发布/许可决策。共享字段唯一来源为[模块接口与数据契约提案](../interface-contract.md)。业务开发与 Windows 实测尚未开始。
+状态：`M0-Contracts v1.0.1` 候选；待产品输入、用户批准 M0 候选技术路线/完整设计及 M1 启动授权。共享字段唯一来源为[模块接口与数据契约提案](../interface-contract.md)。获批启动 M1 后建立工程并执行验证。
 
 | 逻辑模块 | 候选责任 | 显式边界 |
 |---|---|---|
@@ -22,9 +22,9 @@ application 是跨层状态转换的唯一协调者。持久业务转换在 Stor
 | 下游任务 | 依赖契约版本 | 前置输入/验收 |
 |---|---|---|
 | 产品/交互设计 | M0-Contracts v1.0.1 字段占位 | 冻结统计、清理取消、导出及 Idle/轮次语义，形成产品字段定义与 AC |
-| Domain/Application | 批准后的 Command、ClockSample、TimerSnapshot、revision/CAS | 假时钟、重复/陈旧命令、事务失败、恢复/退出时序 |
-| Storage | 批准后的实体/schema与 PersistRequest/Receipt | 迁移、CAS、重复session、强杀恢复、备份一致性、导出范围 |
+| Domain/Application | 用户批准 M1 后采用的 Command、ClockSample、TimerSnapshot、revision/CAS | M1 假时钟、重复/陈旧命令、事务失败、恢复/退出时序 |
+| Storage | 用户批准 M1 后采用的实体/schema与 PersistRequest/Receipt | M1 迁移、CAS、重复session、强杀恢复、备份一致性、导出范围 |
 | Windows 平台 | ClockSample、ThemeSnapshot、LogicalRect | suspend/resume、漏通知、混合DPI、多屏、主题变化和窗口恢复实测 |
 | Slint UI | 批准后的 TimerSnapshot、ThemeSnapshot、Geometry | UI v2已确定方向维持；中文字体、无障碍文本和路径支持作为 M1 renderer 准入；具体 renderer 经目标机与 Hyper-V 工程验证收敛 |
 
-候选依赖及许可证比较见[统一契约第6节](../interface-contract.md#6-依赖边界与模块引用)与[评审包](../contracts/review-packet.md)。用户批准发布/许可路线；crate/API 版本、renderer 和 SQLite durability 由 M1 工程证据收敛，再纳入架构审批。当前文档记录候选方案，尚无构建或测试结果。
+候选依赖及许可证比较见[统一契约第6节](../interface-contract.md#6-依赖边界与模块引用)与[评审包](../contracts/review-packet.md)。先由用户批准 M0 候选技术路线/完整设计及 M1 启动；再创建 Cargo 工程、业务源码和实现型试验。M1 工程证据用于收敛 crate/API 版本、renderer 和 SQLite durability，结果再提交架构细节审批。
