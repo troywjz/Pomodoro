@@ -1,71 +1,81 @@
 # 模块接口与数据契约提案
 
-> 工程候选的统一入口。各角色研究已归档；字段/口径冲突按[共享契约评审包](contracts/review-packet.md)裁决，批准后在本文件更新最终版本。
+> 候选版本 `M0-Contracts v1.0.0`，状态：待产品语义输入及用户架构审批。本文是公共技术字段和时序的唯一候选字段来源；行为含义依赖产品与交互设计交付。业务实现与 Windows 实测尚未开始。
 
-状态：待用户架构审批。本文定义协作边界，业务实现尚未开始。
+## 1. 约定与所有权
 
-## 单一状态来源
+- 时间单位统一为整数毫秒；持久化 UTC 时间为 RFC 3339 UTC，原始本地偏移以分钟整数保存。运行时单调时钟只在当前启动周期内作差，不持久化其原点。
+- ID 使用不透明、不可复用的 UUID；枚举采用带版本的稳定字符串。外部序列化必须包含 `schema_version`。
+- `domain` 定义纯值类型和状态转移；`application` 唯一串行协调命令与副作用；`storage` 只负责原子提交和查询；Windows 平台采集系统事件；Slint 只消费快照并发出命令。
+- 需求含义、统计口径、用户行为及验收定义由产品与交互设计组提出。本契约不冻结含产品语义的字段枚举值；标记 `PRODUCT_INPUT` 的项在输入到位前不得视为已定。
 
-应用协调器串行处理 UI、托盘和 Windows 事件；计时内核接收显式命令与时钟样本，返回新 Snapshot 和待执行 Effect。UI 与托盘读取同一份 Snapshot，禁止各自维护计时进度。
+## 2. 唯一字段字典
 
-| 接口 | 输入 | 输出与规则 |
-| --- | --- | --- |
-| TimerCore | Start、Pause、Resume、Reset、SkipBreak、Tick、Suspend、ResumeDetected、Recover/Discard | Snapshot、Persist、NotifyCompletion；状态转移按 session_id + revision 幂等 |
-| Clock | 活动时间、系统启动经过时间、UTC墙钟、时区偏移 | 活动时间用于倒计时；启动经过时间与活动时间差用于辅助检测漏掉的睡眠事件；墙钟用于历史记录和恢复提示 |
-| Repository | SaveTransition(expected_revision)、Checkpoint、LoadRecovery、QueryToday、Export、Clear | 成功返回已提交 revision；失败返回可展示错误，保留最后已提交状态 |
-| WindowsShell | ApplyTopmost、SetVisible、SetMini、SetTray、RestorePosition | Suspend/Resume、DpiChanged、DisplayChanged、TrayAction、TrayFailed、CloseRequested；转换为协调器命令 |
-| SlintView | Snapshot、可操作错误、恢复/删除/退出确认 | 发送命令，不直接读写数据库或调用 Windows API |
+| 类型 | 候选字段（唯一拼写） | 所有者 / 说明 |
+|---|---|---|
+| `ClockSample` | `active_elapsed_ms:u64`, `boot_elapsed_ms:u64`, `utc_ms:i64`, `local_offset_minutes:i16` | Windows 采集；内核只消费样本。`active_elapsed_ms` 用于活动倒计时；`boot_elapsed_ms` 辅助检测系统睡眠/漏通知；UTC 与偏移用于记录。API、采样精度和漏通知阈值待 Windows 实测。 |
+| `CommandEnvelope` | `command_id:Uuid`, `expected_session_revision:u64?`, `expected_settings_revision:u64?`, `payload:Command` | Application 协议。仅涉及对应实体时携带相应期望 revision；重试沿用同一 `command_id`。 |
+| `TimerSnapshot` | `session_id:Uuid?`, `phase:Phase?`, `state:TimerState`, `target_ms:u64?`, `accumulated_active_ms:u64`, `remaining_ms:u64?`, `session_revision:u64`, `last_checkpoint_utc_ms:i64?` | Domain 输出、UI/托盘共同读取。不得由视图缓存派生计时状态。Idle 目标选择语义为 `PRODUCT_INPUT`。 |
+| `SessionRecord` | `session_id`, `phase`, `target_ms`, `actual_active_ms`, `started_utc_ms`, `ended_utc_ms`, `start_local_date`, `start_offset_minutes`, `outcome`, `reason?` | Storage 持久记录；`outcome`、目标如何归属及各 outcome 的 `actual_active_ms` 算法均为 `PRODUCT_INPUT`。唯一约束 `session_id`。 |
+| `Settings` | `schema_version:u32`, `settings_revision:u64`, `focus_ms:u64`, `short_break_ms:u64`, `long_break_ms:u64`, `long_break_interval:u8`, `topmost:bool`, `sound_enabled:bool`, `theme_mode:ThemeMode`, `window_rect:LogicalRect?`, `monitor_hint:String?` | Storage 持久配置。取值边界/默认值由已批准需求冻结；修改配置不修改活动快照。 |
+| `LogicalRect` | `x_dip:f64`, `y_dip:f64`, `width_dip:f64`, `height_dip:f64` | Windows 平台提供并解释逻辑坐标。 |
+| `ThemeSnapshot` | `mode:light\|dark`, `source:system\|fallback`, `revision:u64` | Windows 平台采集，UI 消费；系统查询失败采用已记录的 fallback。具体首次查询/订阅失败策略依产品/UI规格并待平台验证。 |
+| `PersistRequest` | `command_id`, `expected_global_revision:u64`, `expected_session_revision:u64?`, `expected_settings_revision:u64?`, `candidate_snapshot:TimerSnapshot?`, `session_append:SessionRecord?`, `settings_update:Settings?` | Application → Storage。一个业务状态转换所需的所有行在一个 SQLite 事务内条件检查并写入。全局 revision 用于跨实体提交序列，不取代实体 revision。 |
+| `PersistReceipt` | `command_id`, `global_revision:u64`, `session_revision:u64?`, `settings_revision:u64?`, `committed_utc_ms:i64` | Storage 仅在事务提交成功后返回；失败返回结构化错误及当前持久 revision。 |
+| `ExportEnvelope` | `schema_version:u32`, `exported_utc_ms:i64`, `settings:Settings?`, `sessions:SessionRecord[]` | 导出稳定容器骨架；是否包含设置/活动快照、CSV列及导出权限均为 `PRODUCT_INPUT`。导入不属于本轮候选能力。 |
 
-## 状态约束
+`TimerSnapshot.session_revision` 在该活动 session 生命周期内单调递增；新 session revision 从 1 开始。`Settings.settings_revision` 仅在配置事务成功后递增。`global_revision` 每次成功持久化事务递增，数据库元数据中单一维护。revision 溢出返回不可恢复存储错误，不回绕。初始空库的 global/settings revision 为 0。
 
-- 阶段 focus / short_break / long_break，与 idle / running / paused / completed / recovery 状态分开。
-- idle 开始进入 running；暂停冻结剩余时间；恢复建立新的活动时钟截止值；完成等待用户下一步。
-- 提前结束/重置计 interrupted，跳过休息计 skipped；二者均不增加已完成专注轮次。
-- 常规到期事务一次性完成：关闭活动段、追加唯一历史、更新轮次与快照 revision。提交成功后展示已保存结果。
-- 睡眠通知触发暂停；唤醒进入恢复提示，用户确认后恢复。漏通知检测进入 recovery 并采用最后可靠快照，不自动补完成；检测阈值与 Windows 时钟 API 方案经专项测试定稿。
-- 锁屏继续；改墙钟不扣当前剩余时间。崩溃重启及唤醒后进入 recovery，剩余时长取最近可靠快照；用户点击“继续计时”才进入 running，点击“保持暂停”进入 paused，点击“放弃本段”写 interrupted 后进入 idle。确认前保持 recovery、不推进倒计时；不扣除进程离线或睡眠时长。
-- Start/Pause/Resume/Reset/Complete/Exit 等转换先持久化；失败时展示保存失败、暂停新进度并提供重试，继续保留原快照。后台存储结果用 revision 检查，拒绝过期响应覆盖新状态。
-- running 提案每 15 秒 checkpoint；异常终止恢复损失范围目标为最近 15 秒活动进度。状态转换不等待周期 checkpoint。周期与实际损失界限需要故障注入验收。
+## 3. 命令、CAS 与回执
 
-## 数据模型 v1 提案
+命令为 `Start(phase,duration_ms)`, `Pause(reason)`, `Resume`, `Tick(ClockSample)`, `Reset`, `SkipBreak`, `ResumeDetected(reason)`, `Recover(choice)`, `UpdateSettings(patch)`, `ExitRequested`, `ConfirmExit(choice)`。枚举细节中与产品行为有关的值保持 `PRODUCT_INPUT`；窗口/托盘动作归一成同一命令协议。
 
-所有时长使用整数毫秒；格式升级有 schema_version。单调时钟值只用于同一次系统启动内的运行，持久化恢复依靠已累计活动时间和剩余时间，不跨重启复用单调时钟原点。
+处理顺序：协调器串行接收 → 校验命令 ID 与适用实体 revision → Domain 计算候选快照和待提交记录 → Storage 在单事务内 CAS 检查并提交 → 返回 `PersistReceipt` → Application 核验 receipt 对应 command/revision → 发布快照并执行通知/窗口等非持久 effects。持久化失败时保留最后已提交快照，不发布候选快照；可重试命令复用 command_id。重复 command_id 返回首个持久结果；同 ID 不同 payload 返回 `CommandIdConflict`。陈旧 CAS 返回 `RevisionConflict(current revisions)`，调用方刷新后由用户重新发起命令。
 
-| 实体 | 字段 |
-| --- | --- |
-| Settings | schema_version、focus/short/long_ms、long_break_interval、topmost、sound_enabled、window_logical_rect、monitor_hint |
-| ActiveSession | session_id、phase、state、target_ms、accumulated_active_ms、remaining_ms、revision、last_checkpoint_utc、start_utc、start_local_date、start_offset_minutes |
-| SessionHistory | session_id唯一、phase、target_ms、actual_active_ms、start/end_utc、start_local_date、start_offset_minutes、outcome(completed/interrupted/skipped)、reason |
-| ExportEnvelope | schema_version、exported_at_utc、settings、sessions；CSV含UTF-8、固定列、时区字段与转义规则 |
+周期 checkpoint 使用同一 session CAS，只有 checkpoint 提交后才更新 `last_checkpoint_utc_ms`。候选周期 15 秒是待实测目标。旧 checkpoint revision 被拒绝，不得覆盖状态转换结果。通知按 session_id + 完成事件幂等，通知失败不回滚已提交事务。
 
-存储候选为 `%LOCALAPPDATA%/Pomodoro` 中的 SQLite 单库及应用管理的 backups 目录。配置与历史共用 schema 迁移。应用单实例；第二次启动发送显示请求给既有进程，IPC 命名与访问控制在 Windows 实现任务中评审。
+## 4. 事务边界、恢复与退出
 
-## 命令与结果协议
+| 操作 | 单事务内容 | 提交前后规则 / 失败结果 |
+|---|---|---|
+| 普通 Tick | 活动累计、剩余时间及 session revision | 仅必要 checkpoint 写入；UI 可显示带当前 revision 的内存运行态，但标记最近持久 checkpoint。持久失败立即冻结推进并回退到最后提交快照。刷新频率与数据丢失目标待批准。 |
+| Pause/Resume/Reset/Skip | 候选 session 状态 + 必要历史记录 + revisions | 成功回执后才发布为持久确认态；历史唯一键防重复。产品定义 outcome/reason。 |
+| 到期完成 | 关闭活动段、插入唯一 SessionRecord、更新轮次/状态与 revisions | 一次事务；成功后发布完成快照，再发通知。轮次含义待产品输入。 |
+| Settings 修改 | 完整 Settings 新值与 settings/global revision | CAS 成功后发布配置。活动段参数快照语义待产品输入。 |
+| suspend/崩溃恢复 | 最后持久 checkpoint 为恢复基准 | suspend 通知内尽力 checkpoint；失败保留此前可靠快照。启动或唤醒时进入恢复提示，确认前不推进。用户选项及活动段处理依产品输入。 |
+| Exit | 用户选择导致的暂停/保存/丢弃事务 | 事务 receipt 前不结束 event loop；写失败保持窗口与最后快照并显示可重试错误。取消节点和是否需二次确认由产品组定义。 |
 
-命令公共字段为 command_id（唯一请求标识）、expected_revision（操作所见版本）；带时钟样本的事件由协调器统一采集 active_ms、boot_ms、utc_ms。命令结果为 Accepted(new_revision, snapshot, effects)、Rejected(code, current_snapshot) 或 Duplicate(original_result)。过期 revision 拒绝并刷新视图；同一 command_id 重投返回原结果；Tick 与系统事件按协调器顺序串行处理。
+Migration 在接受业务命令前执行：一致性备份成功后在事务内升级 schema；备份或迁移失败保留原文件并进入可恢复错误界面。永久清除及清空历史的具体顺序、备份范围与取消语义为 `PRODUCT_INPUT`，本契约只要求执行批准流程时每一步有显式事务边界和失败回执。
 
-| 命令与参数 | 合法前置状态 | 结果 |
-| --- | --- | --- |
-| Start(phase, duration_ms) | idle；completed 的用户明确下一步 | 新 session_id，running；继承的旧完成记录保留 |
-| Pause(reason=user/suspend) | running | 固定 remaining_ms；user 进入 paused，suspend 进入 recovery 等待唤醒确认 |
-| Resume | paused | 从冻结的 remaining_ms 建立活动截止值，进入 running |
-| Tick(clock_sample) | running | 更新时间；到期产生一次 Complete 事务，completed；其他状态忽略 Tick |
-| ResumeDetected(reason=power/missed_suspend) | running / recovery | 采用最后可靠快照进入 recovery，停止推进，等待用户选择 |
-| Recover(choice=continue/keep_paused/discard) | recovery | 分别进入 running / paused / idle；discard 持久化 interrupted |
-| Reset | running / paused / recovery | 记录 interrupted，进入同阶段 idle；completed重开使用 Start 新ID |
-| SkipBreak | short_break / long_break 的 running或paused | 记录 skipped，进入 focus idle，等待用户开始 |
-| ExitRequested / ConfirmExit(choice=save/discard/cancel) | 任意 / 活动段确认中 | 活动段先暂停；save持久化paused恢复快照，discard写interrupted，cancel返回暂停；idle/completed直接保存退出 |
+## 5. 几何、主题与存储
 
-无效 phase、超界 duration、状态不符、磁盘错误、revision冲突分别返回可区分错误；拒绝操作保留最后可靠快照。Persist effect 带 expected_revision、完整候选Snapshot与待追加History，成功回执后才能发布已保存Snapshot。NotifyCompletion effect 带 session_id、phase 与用户音效设置，按session_id去重；Shell effect带可见性/置顶目标值。退出须等待事务回执后退出event loop。
+`GeometryRequest` 候选输入为物理显示器宽度 `monitor_width_px` 与缩放比例 `dpi/96`；输出目标物理宽度按 `floor(width_px/10 + 0.5)`，再换算 DIP。展开/收起消费同一宽度。该公式来自产品草案，批准和显示器中心点/跨屏事件顺序仍待评审；API坐标空间、DPI与窗口边界行为待 Windows 实测。
 
-## 配置与迁移
+SQLite 候选单库包含 settings、active_session、session_history、schema_meta；历史 session_id 唯一，revision CAS 在事务内执行。备份采用 SQLite 一致性备份 API/在线备份机制，禁止直接复制活动 WAL 数据库主文件。删除与导出先使用一致性读快照；各自内容范围由产品输入定义。
 
-提案输入范围：专注1–180分钟、短休1–60分钟、长休1–120分钟、长休间隔1–12轮，仅接受整数。空白/非整数/超界显示字段错误、禁用保存并保留旧值；修改时长仅影响下一新段。配置默认25/5/15及4轮，声音默认关、自动开始无开启入口。
+## 6. 依赖边界与模块引用
 
-迁移在打开库后、接受业务命令前进行：验证schema_version，先在应用管理的backups目录生成一致性备份，保留至用户清理；备份失败立即中止迁移并保留原库。在单一事务升级，失败回滚并显示只读错误恢复页。遇到更新版本schema时拒绝写入并保留原文件；损坏库保留原件，用户可选择恢复已验证备份或确认后新建空库，禁止静默覆盖。备份验证包含可读取、schema版本支持和完整性检查。
+```text
+platform/windows --ClockSample / ThemeSnapshot / LogicalRect--> application
+ui --CommandEnvelope--> application --TimerSnapshot--> ui
+application --PersistRequest--> storage --PersistReceipt--> application
+domain: Command + ClockSample -> candidate TimerSnapshot + effects (pure)
+```
 
-统计提案：今天完成专注轮次及实际专注分钟；按开始时本地日期归属，保存当时UTC偏移。历史和手动备份默认保留至用户清理。清空历史保留设置与活动段且先备份；永久清除结束活动段后删除库、配置和应用管理备份，用户自行导出的文件范围在确认中说明。
+Domain 不依赖 Slint、Windows、SQLite；UI 不访问 storage/platform API；storage 不定义产品统计口径；Windows 层不推进倒计时。Application 依赖 domain、storage 抽象及 platform 事件端口，负责顺序、幂等和回执核验。
 
-## 依赖与验收
+| 依赖 | 候选 | 推荐 | 影响与待决 |
+|---|---|---|---|
+| Rust toolchain | 当前 stable；发布时锁定 `rust-toolchain.toml` | 采用发布时最新稳定版并锁定，避免文档固定将来已过期版本 | 截至 2026-11-18 官方 release 页面列出 Rust 1.100.0（2026-11-12）；M1 需在 Windows 实际构建验证。 |
+| Slint backend | `backend-winit` | Windows 桌面用 Winit | 默认 feature 和实际版本随批准的 Slint crate 一并锁定。 |
+| Slint renderer | software / FemtoVG-WGPU / Skia | 首轮评估 `renderer-software` 以减少 GPU 驱动变量；若视觉/性能验收不足，再比较 FemtoVG-WGPU | software 限制见官方文档；WGPU 需要兼容 GPU。需实际原型/目标机器对照后由用户批准。Skia 增加包体依赖。 |
+| Slint license | GPLv3 / royalty-free community license / paid seat license | 若要求应用保持 MIT 且不承担 GPLv3 完整作品分发义务，采用官方 royalty-free Community License 并遵守署名条款 | 产品发布/开源形式由用户决定；GPLv3 路线要求完整衍生作品按 GPLv3 提供。应对选定版本逐项核验 notices 与第三方依赖。 |
+| SQLite crate | 系统 SQLite / rusqlite `bundled` | rusqlite bundled | 部署一致、避免依赖用户机器 SQLite 版本；编译时间和二进制体积增加。crate 与 bundled SQLite 版本在建 Cargo 工程时锁定并做许可清单。 |
+| SQLite durability | WAL + synchronous NORMAL / WAL + FULL | WAL + FULL，前提是每次业务转换本身事务提交 | 官方 SQLite 说明 WAL+NORMAL 在应用崩溃安全但系统断电可能丢最近提交；FULL 每事务额外同步，提供更强掉电持久性并可能增加延迟。实际 Windows 文件系统/设备仍需故障注入测试。 |
 
-先批准状态表、字段与保存失败语义，再并行实现内核、存储、WindowsShell 和 UI；接口变更由 Lead 审核并更新关联 Issue。验收覆盖假时钟、重复事件、写入失败、睡眠漏通知、强杀、跨日、迁移、导出、备份/永久清除。所有实测等待开发阶段。
+## 7. 来源、依赖与状态
+
+- 内部来源：PR #21 基线 `4dcefb23035017571d0e134e7a370401b279f1f9`；分配修订 `e35f5f2d7ddda901e4839338ff308077d3427a82`；产品草案 `docs/product/requirements-v0.2.md`；原候选 `docs/contracts/review-packet.md`；X5–X8 `docs/quality/review-register.md`。
+- 官方资料（核对日 2026-11-18）：[Rust releases](https://doc.rust-lang.org/releases.html)、[Slint license FAQ](https://slint.dev/faqs)、[Slint getting started/licensing](https://slint.dev/get-started)、[Slint backends/renderers](https://docs.slint.dev/latest/docs/slint/guide/backends-and-renderers/backends_and_renderers/)、[SQLite synchronous pragma](https://www.sqlite.org/pragma.html)、[SQLite WAL](https://www.sqlite.org/wal.html)、[rusqlite bundled 文档](https://docs.rs/crate/libsqlite3-sys/0.38.2)。版本和许可须随实际 Cargo 锁定文件及发行组合再次核对。
+- 产品输入依赖：统计字段含义/outcome 与日期归属；清理类型、确认/取消时序和部分失败策略；导出包含内容、格式列、隐私及恢复边界；Idle目标语义与完成轮次规则。负责组：产品与交互设计；Lead 统一裁决记录。
+- Windows 待验证：时钟采样/睡眠信号、DPI/多屏几何、主题订阅、退出和强杀故障恢复、WAL 文件系统持久性、打包 renderer 与辅助技术。
