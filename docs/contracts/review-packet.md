@@ -1,46 +1,46 @@
 # 共享契约评审包
 
-版本：`M0-Contracts v1.0.0` 候选（2026-11-18）。状态：待产品语义输入及用户架构审批。公共字段定义只维护于[模块接口与数据契约提案](../interface-contract.md)；本页记录依赖、建议、替代影响和待决项。
+版本：`M0-Contracts v1.0.1` 候选（2026-11-18）。状态：待产品语义输入及用户发布/许可决策；公共字段定义只维护于[模块接口与数据契约提案](../interface-contract.md)。本修订回应独立审查 dd4402a。
 
 ## 候选统一方向
 
 | 议题 | 技术候选 | 状态 / 验收样例 |
 |---|---|---|
-| Command/TimerSnapshot/Clock | command_id 幂等；ClockSample 一次采样注入；UI/托盘读同一快照 | 字段见统一契约第2节；假时钟推进 1000ms 时，内核剩余量只按一份 sample 变化 |
-| revision/CAS | session/settings revision 分域，global revision 表示已提交事务序列；旧 CAS 拒绝 | 同一配置 revision 的两个更新只允许一个提交；陈旧回执不覆盖新快照 |
-| 事务/故障 | 业务状态、历史与 revision 同事务；提交 receipt 后发布快照 | 注入提交失败，候选状态不对 UI 宣告已保存；重放同 command_id 只产生一条历史 |
-| 恢复/退出 | 持久 checkpoint 是恢复基准；退出事务回执前不关闭 event loop | 强杀后加载最后一次有效快照；退出写失败时进程保持可恢复并显示错误。均待 Windows/应用测试 |
-| Geometry/Theme | 屏幕物理宽度按十分之一 half-up 后转 DIP；System theme 经 platform 采集 | 多屏、跨屏、DPI、主题变化均待 Windows 实测；产品公式待架构批准 |
-| Repository/schema | SQLite 单库，事务内迁移/CAS，活动 WAL 用一致性备份机制 | 迁移中途失败回滚且保留原库；具体 durability 为用户架构决策 |
+| ClockSample | `active_elapsed_ms`、`boot_elapsed_ms` 为同一次启动内固定原点的累计单调读数；协调器取相邻已接纳样本差值 | 重复值幂等忽略、递增值只累计一次、回退读数冻结并进入恢复；重启后重置读数基线 |
+| 运行态与持久 revision | 每个可见 Tick 只推进进程内 `runtime_seq`；持久 `session_revision` 只由 checkpoint CAS 成功推进 | 注入 checkpoint 成功/失败，核对 clean/saving/unsaved、未保存差额与重启基准 |
+| 跨重启幂等 | `command_receipts` 保存 command_id、payload_hash、首次结果；与业务写入/revision 同事务 | 模拟 COMMIT 后响应前崩溃再重试，返回原结果且只写一条业务记录；同 ID 不同 payload 返回冲突 |
+| 恢复/退出 | 最近成功 checkpoint 为重启恢复基准；持久命令以 receipt 核验结果 | 强杀恢复和退出写失败需应用/Windows测试；本包给出事务样例，结果待执行 |
+| Geometry | 承接已确定的展开/收起同宽、所在显示器物理宽度10%；按 `floor(width_px/10 + 0.5)` 后换算 DIP | 产品方向已经确定；显示器识别、DPI API和跨屏事件顺序作为工程细节完成 Windows 实测 |
+| Repository/schema | SQLite 单库、事务内 schema/CAS/receipt；活动 WAL 使用一致性备份机制 | 迁移失败回滚、重复业务命令与幂等回执联测 |
 
 ## 产品语义依赖（交产品与交互设计组定义）
 
 | 字段/议题 | 需要产品组明确的语义 | 契约处理方式 |
 |---|---|---|
-| 统计 X5 | 哪些 outcome 计入 completed focus；`actual_active_ms` 对 interrupted/skipped 的含义；按哪一日期归属；跨日规则 | 保留 `SessionRecord.actual_active_ms` 字段槽位，算法与查询验收样例待输入 |
-| 清理 X6 | 清历史/永久清除的目标范围；活动段结束行为；最终确认与每个取消节点顺序；部分失败如何反馈 | Storage 暴露分步事务与失败回执；步骤顺序不冻结，待产品语义 |
-| 导出 X8 | Settings/活动快照是否包含；固定 CSV 列、隐私字段、导出范围；导出文件是否用于恢复 | `ExportEnvelope` 仅冻结版本骨架；字段包含与 CSV/恢复规则待产品组定义 |
-| 计时/UI状态 | Idle 是否预选目标、开始轮次与长休轮次规则、恢复选择对活动段的影响 | 命令和快照保留明确占位；状态语义/API枚举待输入 |
+| 统计 X5 | 哪些 outcome 计入 completed focus；`actual_active_ms` 对 interrupted/skipped 的含义；日期归属和跨日规则 | 保留 `SessionRecord.actual_active_ms` 字段槽位，算法与查询验收样例等待产品输入 |
+| 清理 X6 | 清历史/永久清除范围；活动段结束行为；最终确认与取消节点顺序；部分失败反馈 | Storage 提供分步事务与失败回执，操作顺序跟随产品定义 |
+| 导出 X8 | Settings/活动快照包含范围；CSV列、隐私字段、导出用途和恢复边界 | `ExportEnvelope` 冻结版本骨架，内容范围与格式等待产品定义 |
+| 计时状态 | Idle目标、完成轮次、长休规则、恢复选择后活动段处理 | 命令/快照保留字段槽位，枚举语义和验收样例等待产品输入 |
 
-产品含义与技术机制出现冲突时，契约维护者提交问题和技术影响给产品组；Lead 组织用户裁决并记录批准版本。当前字段占位不构成产品决定。
+## 用户决策：发布与许可
 
-## 架构与依赖决策项（请用户裁决）
-
-| 决策 | 推荐 | 替代方案及实际影响 |
+| 决策 | 推荐 | 可比较选项与影响 |
 |---|---|---|
-| Slint 授权与发布形态 | 若项目保持 MIT 且不采用 GPLv3 完整作品路线，选 Slint 官方 Community License 并按其条款署名 | GPLv3 要求完整作品以 GPLv3 分发；付费 Seat License 提供无 copyleft 路线并含标准支持。用户需确定应用是否开源、许可证及是否接受署名/席位成本 |
-| Slint backend/renderer | Windows 首轮使用 Winit backend；先评估软件 renderer，验收不满足再测 FemtoVG-WGPU | Software 更便携但文档列有绘制限制；WGPU 有 GPU/驱动条件；Skia 增加磁盘体积与部署依赖。最终选择依据实际机器视觉、辅助技术与资源测试 |
-| Rust 版本 | M1 创建工程时采用当时最新 stable 并锁定工具链 | 评审日官方 Release Notes 显示 1.100.0 于 2026-11-12 发布；若工程依赖尚未适配，可选已验证 stable 并记录原因 |
-| SQLite 构建 | rusqlite bundled，固定 crate/SQLite 版本并出具依赖许可证清单 | 系统 SQLite 可缩小应用自带依赖，但用户机器版本/安装成为变量；bundled 增加编译与包体 |
-| SQLite durability | WAL + `synchronous=FULL` 用于关键事务 | WAL + `NORMAL` 在应用崩溃下事务安全但系统崩溃/断电时最近提交可能回滚，性能与延迟较好；FULL 每事务同步，延迟增加。推荐 FULL；Windows 文件系统仍须故障注入验证 |
+| 应用发布形态及 Slint 许可路线 | 若 Pomodoro 保持 MIT 发行，选择 Slint 官方 Community License 并满足署名条件 | GPLv3 路线要求完整作品按 GPLv3 分发；付费 Seat License 提供商业授权和标准支持。请用户确定应用采用 MIT/其他许可、GPLv3 完整作品路线或商业 Seat License，并确认相应署名/费用安排。 |
 
-## 来源与验收状态
+## 工程验证项：由 M1 收敛
 
-- 工程输入：PR #21 基线 `4dcefb23035017571d0e134e7a370401b279f1f9`；M0 分工 v2 `e35f5f2d7ddda901e4839338ff308077d3427a82`。
-- 产品草案：`docs/product/requirements-v0.2.md`；评审登记：`docs/quality/review-register.md` X5–X8。它们支持需求输入与待决标记，不作为已批准产品定义。
-- 官方一手资料核对日 2026-11-18：Rust [Release Notes](https://doc.rust-lang.org/releases.html)；Slint [FAQ/license](https://slint.dev/faqs)、[license selection](https://slint.dev/get-started)、[backend/renderer](https://docs.slint.dev/latest/docs/slint/guide/backends-and-renderers/backends_and_renderers/)；SQLite [`synchronous`](https://www.sqlite.org/pragma.html)、[WAL](https://www.sqlite.org/wal.html)；rusqlite [bundled feature](https://docs.rs/crate/libsqlite3-sys/0.38.2)。正式版本锁定时需重新核对依赖和许可清单。
-- 本提交完成的验证限于文档引用、重复字段/时序一致性、候选状态和样例可审阅性。未运行应用、构建 Cargo 工程、Windows 实测或故障注入；这些结果均待相应任务执行。
+| 项目 | 当前推荐 | 验证/批准范围 |
+|---|---|---|
+| Slint renderer | Windows Winit + `renderer-skia` 作为中文桌面首轮候选 | 官方 Windows 资料列出 Skia 的 `skunicode`/ICU 依赖，字体文档说明系统字体自动发现及自定义字体嵌入。M1 准入先检查简繁中文字体覆盖与回退、中文 UI/路径、屏幕阅读器输出；随后对 Windows 目标机、Hyper-V、GPU/CPU兼容性、视觉质量、资源与打包进行实测。软件 renderer 当前官方文本范围为西文，列入排除项；FemtoVG-WGPU 作为工程对照。Skia 的 MSVC/运行库和包体成本纳入比较，renderer/features 按实测证据收敛后列入架构批准范围。
+| Rust 工具链 | M1 开工时最新 stable 并锁定 | 官方 Release Notes 在核对日列出 Rust 1.100.0（2026-11-12）；M1 用实际依赖编译验证并锁定适配版本。
+| SQLite 构建 | rusqlite `bundled` | 固定 crate/SQLite 版本并生成第三方许可清单；对系统 SQLite 方案比较安装体积与环境依赖。
+| SQLite durability | WAL + `synchronous=FULL` 用于业务关键事务 | 对照 WAL + `NORMAL` 的提交延迟；FULL 每笔事务追加同步以增强掉电持久性。目标 Windows 文件系统需故障注入，记录实际差异后批准默认值。
 
-## 下游依赖
+## 来源、状态与下游
 
-产品与交互设计先补齐语义表，再由 Lead 汇总用户裁决；用户批准架构、许可与 durability 路线后，M1 才锁定 crate/feature 并建立可运行基线。实现任务引用本版本和批准修订，不从归档研究直接复制互相冲突的字段。
+- 工程输入：PR #21 基线 `4dcefb23035017571d0e134e7a370401b279f1f9`；M0 分工 v2 `e35f5f2d7ddda901e4839338ff308077d3427a82`；独立审查基准 `dd4402a`。
+- 产品草案：`docs/product/requirements-v0.2.md`；评审登记 X5–X8：`docs/quality/review-register.md`。UI 四项已确定方向保持原记录，10%同宽要求属于既定输入。
+- 官方一手资料（核对日 2026-11-18）：Rust [Release Notes](https://doc.rust-lang.org/releases.html)；Slint [FAQ/license](https://slint.dev/faqs)、[license selection](https://slint.dev/get-started)、[backends/renderers](https://docs.slint.dev/latest/docs/slint/guide/backends-and-renderers/backends_and_renderers/)、[font handling](https://docs.slint.dev/latest/docs/slint/guide/development/fonts/)、[1.19 release](https://slint.dev/blog/slint-1.19-released)、[Windows packaging / Skia ICU](https://docs.slint.dev/latest/docs/slint/guide/platforms/desktop/windows/packaging/)；SQLite [`synchronous`](https://www.sqlite.org/pragma.html)、[WAL](https://www.sqlite.org/wal.html)；rusqlite [bundled feature](https://docs.rs/crate/libsqlite3-sys/0.38.2)。正式版本锁定时依具体依赖与发行组合复核。
+- 本轮验证范围：文档字段与时序交叉审阅、相对链接、diff 检查。应用构建、Unicode/辅助技术实测、Windows/Hyper-V、崩溃注入、renderer资源和SQLite持久性均为 M1 待执行项。
+- 下一步：产品与交互设计组补齐 X5/X6/X8 和计时状态语义；用户裁决发布/许可路线；M1 按工程准入表测试 renderer/工具链/SQLite 并提交证据后冻结架构版本。
