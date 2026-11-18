@@ -67,11 +67,14 @@
 
 ## M0 全状态候选补充
 
-- 新增可编辑状态矩阵：[ui-v2-state-matrix.svg](ui-v2-state-matrix.svg)。浏览器渲染预览：[ui-v2-state-matrix-preview.png](ui-v2-state-matrix-preview.png)。原四画板 SVG/PNG 保留为输入，不覆盖。
-- 候选矩阵覆盖 Light 主窗（无目标 idle、running、paused、completed）及 Dark 设置、清理确认、备份错误、recovery；界面结构以 Light/Dark 语义 token 配对，系统查询成功跟随系统，查询前和查询失败使用 Light。Light 弹窗/恢复与 Dark 主窗的几何沿用同一组件与状态规则，主题变量见下方映射。
+- 新增独立可编辑主题画板：[Light 状态](ui-v2-states-light.svg)及[Light PNG](ui-v2-states-light-preview.png)、[Dark 状态](ui-v2-states-dark.svg)及[Dark PNG](ui-v2-states-dark-preview.png)。旧 `ui-v2-state-matrix.svg/.png` 和最初四画板素材保留为历史输入，不作 v2.1 验收证据。
+- Light 与 Dark 各自实际画出 idle 无目标、idle 已选目标、running、paused、completed、settings、清空历史确认、备份错误与 recovery；主窗与弹窗/错误/recovery 两主题成对覆盖。系统查询成功跟随当前主题，查询前及查询失败采用 Light。
 - 主题映射覆盖主窗、设置、确认、错误、圆圈、按钮、文字、焦点环；失败消息同时说明操作结果和下一步。错误色使用文字与边框/背景共同表达，不单独依赖颜色。
-- 无目标 idle 使用空轨道与“选择阶段”；已选目标仍为 idle，显示满轨和“开始”；recovery 在用户选择前冻结。读屏名称组合剩余时间、阶段、精确读数和运行状态，圆弧为辅助视觉信息。
+- 无目标 idle 使用空轨道与“选择阶段”；独立 `idle_with_target` 画板显示目标时长 25:00、满轨和“开始”，状态仍为 idle。running/paused/recovery 均以 24:18/25:00 = 1458/1500 = 97.2% 显示；圆弧长度按各自半径周长×0.972计算，余弧为周长×0.028。completed 显示 00:00 与零进度。recovery 在用户选择前冻结。读屏名称组合剩余时间、阶段、精确读数和运行状态，圆弧为辅助视觉信息。
 - 全按钮矩形是鼠标热区和键盘焦点框；Tab 按视觉顺序移动，Enter/Space 激活焦点按钮；默认、悬停、按下、焦点和禁用状态按相同标签中心定位。设置与展开/收起保持独立入口。
-- 显示矩阵示范物理宽/逻辑宽：137/137、192/192、256/204.8、384/256；混合双屏 192/192 ↔ 256/170.67。展开与收起同宽；高度及内容变化。物理宽按屏幕物理像素除以 10 后 half-up，再按 DPI 转逻辑尺寸。
-- 本地 SVG 由 Microsoft Edge headless Chromium 渲染为 PNG，并在图像预览中检查布局；这是规格原型渲染。Figma MCP 当前实际返回 `You've reached the Figma MCP tool call limit on the Starter plan. Upgrade your plan for more tool calls`，所以本轮未写入 Figma。Figma 原生画板、变量绑定与实际多显示器/DPI应用验证仍待完成。
+- 显示矩阵示范物理宽/逻辑宽：137/137、192/192、256/204.8、384/256；混合双屏 192/192 ↔ 256/170.67。展开产品窗为 192×300 dip，收起产品窗为 192×88 dip，两者共用物理宽/逻辑宽输入；评审卡片边界以虚线显示并位于产品窗之外。物理宽按屏幕物理像素除以 10 后 half-up，再按 DPI 转逻辑尺寸。
+- 所有按钮文案使用矩形中心 `(x + width/2, y + height/2)` 锚点，并按水平居中与 `dominant-baseline=middle` 绘制；SVG 节点位置与圆弧周长计算已校核。两张 PNG 由 Microsoft Edge headless Chromium 实际渲染并分别目视检查。几何/文案为规格证据；鼠标、键盘和辅助技术交互仍待未来应用实现验证。
+- 几何样例：产品窗 SVG 坐标按 1.25×绘制，展开 240×375 px 对应 192×300 dip，收起 240×110 px 对应 192×88 dip；虚线评审卡片 520×405 px 是注释容器，不是应用窗。主按钮矩形为 204×48 px，中心锚点为 `(252,260)`；重置按钮 96×42 px，中心 `(198,317)`；结束按钮 96×42 px，中心 `(306,317)`。卡片内每个按钮文案按矩形几何中心使用 `text-anchor=middle` 与 `dominant-baseline=middle`。
+- 进度弧对 running、paused 与 recovery 均取 24:18 / 25:00 = 1458/1500 = 0.972。半径 29 的周长为 182.212374，弧段 177.110427、余段 5.101946；recovery 半径 25 的周长为 157.079633，弧段 152.681403、余段 4.398230。属性由圆周公式计算，数字和目标时长同源；idle 已选目标用 25:00 满环，completed 归零。
+- Figma MCP 当前实际返回 `You've reached the Figma MCP tool call limit on the Starter plan. Upgrade your plan for more tool calls`，所以本轮未写入 Figma。原生画板、变量绑定与实际多显示器/DPI应用验证仍待完成。
 - 对照产品候选行为见 [M0 行为决策](../../product/m0-behavior-decisions.md)。上述推荐和状态均待用户批准；交付内容为规格候选，未进行应用实现或运行验证。
