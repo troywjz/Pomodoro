@@ -9,6 +9,8 @@
 
 ## 分工与隔离
 
+- 用户要求的可对话角色session遵循`docs/team/README.md`；每角色独立Worktree和分支。当前新增UI要求见`docs/ui-revision-v2.md`，新版原型确认前保持文档/原型阶段。
+
 - 执行任务使用独立 Git Worktree、独立分支与路径白名单；每个任务明确接口、依赖、验收标准和 Issue。
 - 优先使用 Codex 原生 create_worktree 和多 Agent；禁止把未创建的任务或 Worktree 写成已分派。
 - 先检查 `git status -sb`。保护未提交和无关改动，禁止宽泛 stage、reset 或覆盖他人文件。
