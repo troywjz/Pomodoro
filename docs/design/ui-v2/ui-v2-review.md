@@ -64,3 +64,14 @@
 - Figma 独立页面与变量：待额度恢复，未写入。
 - 主流程截图实际渲染、字体/bounds/重叠目视复核：最新修正版 SVG 浏览器渲染检查已完成；Figma 原生截图与多显示器实机检查待执行。
 - 独立测试角色审查：待 team/testing-v2 读取并记录。
+
+## M0 全状态候选补充
+
+- 新增可编辑状态矩阵：[ui-v2-state-matrix.svg](ui-v2-state-matrix.svg)。浏览器渲染预览：[ui-v2-state-matrix-preview.png](ui-v2-state-matrix-preview.png)。原四画板 SVG/PNG 保留为输入，不覆盖。
+- 候选矩阵覆盖 Light 主窗（无目标 idle、running、paused、completed）及 Dark 设置、清理确认、备份错误、recovery；界面结构以 Light/Dark 语义 token 配对，系统查询成功跟随系统，查询前和查询失败使用 Light。Light 弹窗/恢复与 Dark 主窗的几何沿用同一组件与状态规则，主题变量见下方映射。
+- 主题映射覆盖主窗、设置、确认、错误、圆圈、按钮、文字、焦点环；失败消息同时说明操作结果和下一步。错误色使用文字与边框/背景共同表达，不单独依赖颜色。
+- 无目标 idle 使用空轨道与“选择阶段”；已选目标仍为 idle，显示满轨和“开始”；recovery 在用户选择前冻结。读屏名称组合剩余时间、阶段、精确读数和运行状态，圆弧为辅助视觉信息。
+- 全按钮矩形是鼠标热区和键盘焦点框；Tab 按视觉顺序移动，Enter/Space 激活焦点按钮；默认、悬停、按下、焦点和禁用状态按相同标签中心定位。设置与展开/收起保持独立入口。
+- 显示矩阵示范物理宽/逻辑宽：137/137、192/192、256/204.8、384/256；混合双屏 192/192 ↔ 256/170.67。展开与收起同宽；高度及内容变化。物理宽按屏幕物理像素除以 10 后 half-up，再按 DPI 转逻辑尺寸。
+- 本地 SVG 由 Microsoft Edge headless Chromium 渲染为 PNG，并在图像预览中检查布局；这是规格原型渲染。Figma MCP 当前实际返回 `You've reached the Figma MCP tool call limit on the Starter plan. Upgrade your plan for more tool calls`，所以本轮未写入 Figma。Figma 原生画板、变量绑定与实际多显示器/DPI应用验证仍待完成。
+- 对照产品候选行为见 [M0 行为决策](../../product/m0-behavior-decisions.md)。上述推荐和状态均待用户批准；交付内容为规格候选，未进行应用实现或运行验证。
