@@ -1,6 +1,6 @@
 # 待办与依赖
 
-本轮 session/工作树配置与责任边界见[M0 任务分配 v1](active/m0-task-allocation.md)。先配置 UI 和契约两个执行任务；独立审查在收到交付 commit 后启动。
+本轮 session/工作树配置与责任边界见[M0 任务分配 v2](active/m0-task-allocation.md)。先配置产品与交互设计（M0 需求与原型收尾）和工程契约两个执行任务；独立审查在收到交付 commit 后启动。
 
 | 任务 | 状态 | 依赖 | 交付 |
 | --- | --- | --- | --- |

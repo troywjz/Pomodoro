@@ -1,23 +1,27 @@
-# M0 任务分配 v1
+# M0 任务分配 v2
 
-本轮目标：将设计与契约评审分别交给短任务 session，以独立分支和工作树隔离文件改动。Lead 保持当前项目管理入口，负责需求变更、依赖、交付复核与整合。
+本轮目标：按已采纳的[责任分组](../../team/README.md)配置短任务 session。产品与交互设计承担当前 M0 需求与原型收尾，工程契约由独立任务统一维护；两者使用独立分支和工作树。Lead 负责范围协调、依赖、审批组织、交付复核与整合。
+
+稳定责任组、当前任务和执行 session 分层登记。UI v2 是产品与交互设计组当前交付的一部分；该组同时承接需求、行为口径和验收定义。session 与工作树按当前交付包轮换。
 
 ## 输入与本轮终点
 
 - 工程输入：统一基线 PR #21，commit `4dcefb23035017571d0e134e7a370401b279f1f9`。
-- 分配规格：M0 任务分配 v1；执行 session 从包含本说明的管理提交创建，启动时记录实际 HEAD。
+- 分配规格：M0 任务分配 v2；保留 v1 已创建的两个 session/工作树，开工准备时同步本次职责修订并记录实际 HEAD。
 - 当前首轮只做开工准备：核对 cwd、Git 根目录、分支、干净状态与输入，登记工作树，返回任务边界和就绪状态后停止。
 - 后续设计或契约产出由 Lead 按已分配范围派发。业务源码、Cargo 工程、实现型试验保持待启动；合并、发布和关键架构批准归用户。
 
 ## 当前任务
 
-| 任务/session | 责任与交付终点 | 独占写入范围 | 依赖 |
+| 责任组与当前任务/session | 责任与交付终点 | 独占写入范围 | 依赖 |
 | --- | --- | --- | --- |
-| M0-UI #18 · UI v2 全状态设计 | 完成全状态、主题、尺寸与交互设计证据，记录 Figma 原生同步状态，交 Lead 安排独立审查 | `docs/design/ui-v2/**`、`docs/plans/deliveries/m0-ui.md`；Figma 指定文件的独立 UI v2 页面 | [UI 任务说明](ui-v2-review.md)、产品 v0.2 和现有 SVG/PNG |
-| M0-Contracts #19 · 共享契约评审包 | 汇总共享字段与行为、逐项给出建议和待用户决策项，交一个版本化候选评审包 | `docs/contracts/**`、`docs/interface-contract.md`、`docs/architecture/modules.md`、`docs/plans/deliveries/m0-contracts.md` | [契约任务说明](contracts-review.md)、当前评审包 |
+| 产品与交互设计 · M0 需求与原型收尾（承接 #18） | 澄清未决行为与指标、维护需求和 AC 定义，完成全状态/主题/尺寸/交互设计证据，交一个需求与原型评审包 | `docs/product/**`、`docs/ui-revision-v2.md`、`docs/acceptance.md` 的 AC 定义、`docs/design/ui-v2/**`、`docs/plans/deliveries/m0-ui.md`；Notion 产品需求页、Figma 独立 UI v2 页面 | [产品与设计任务说明](ui-v2-review.md)、产品 v0.2 和现有 SVG/PNG |
+| Lead/集成协调的工程契约任务 · M0-Contracts #19 | 汇总技术字段与时序、提出工程建议；将产品语义问题交产品与交互设计澄清，交一个版本化候选评审包 | `docs/contracts/**`、`docs/interface-contract.md`、`docs/architecture/modules.md`、`docs/plans/deliveries/m0-contracts.md` | [契约任务说明](contracts-review.md)、当前评审包；行为口径按版本接入产品交付 |
 | M0 独立审查 · 待派发 | 收到具体交付 commit 后，新建干净审查 session，按验收标准审阅实际 diff/设计产物 | 审查报告独立文件；读取作者指定提交 | UI 或契约交付；当前保持待派发 |
 
-UI 与契约任务可以并行。两者均为候选资料，所有跨任务决策先交 Lead 记录。Figma 的唯一写入者为 UI 任务，Notion 需求/审批同步由 Lead 负责。项目状态、待办、公共验收登记与任务说明由 Lead 维护。
+产品/设计与契约任务可以并行整理各自候选资料；依赖未决行为的字段保持待定，用户裁决后统一版本。需求、指标含义、AC 定义与视觉交互由产品与交互设计提出，技术字段/协议/事务时序由契约任务提出。Lead 负责冲突协调和批准记录，用户决定业务与重大架构。
+
+Figma 独立 UI v2 页面及 Notion 产品需求页由产品与交互设计唯一写入；Notion 项目总览、审批记录、Git 项目状态、待办、公共评审登记与任务说明由 Lead 维护。当前保持开工准备阶段，外部编辑随正式任务派发执行。
 
 ## 会话与工作树规则
 
