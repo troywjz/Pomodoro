@@ -1,0 +1,378 @@
+component ActionButton inherits Rectangle {
+    in-out property <string> label;
+    in-out property <bool> primary;
+    in-out property <bool> dark;
+    in-out property <bool> enabled: true;
+    callback clicked();
+
+    background: !enabled ? (dark ? #252a34 : #e8ebf0)
+        : primary ? (dark ? #91a7ff : #4263eb)
+        : (dark ? #252c39 : #edf1ff);
+    border-color: primary ? (dark ? #91a7ff : #4263eb)
+        : (dark ? #394152 : #cbd3df);
+    border-width: 1px;
+    border-radius: 9px;
+
+    Text {
+        text: label;
+        color: !enabled ? (dark ? #7d8490 : #9aa2af)
+            : primary ? (dark ? #151a25 : #ffffff)
+            : (dark ? #f3f5f8 : #182236);
+        font-family: "Microsoft YaHei UI";
+        font-size: 14px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        enabled: parent.enabled;
+        clicked => { parent.clicked(); }
+    }
+}
+
+component ProgressRing inherits Rectangle {
+    in-out property <float> progress;
+    in-out property <bool> dark;
+    in-out property <bool> compact;
+    in-out property <color> accent;
+    in-out property <string> progress-path;
+
+    width: compact ? 44px : 52px;
+    height: compact ? 44px : 52px;
+    background: transparent;
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        commands: compact
+            ? "M 22 2 A 20 20 0 1 1 21.99 2"
+            : "M 26 2 A 24 24 0 1 1 25.99 2";
+        stroke: dark ? #343b49 : #e5eaf2;
+        stroke-width: compact ? 4px : 5px;
+        fill: transparent;
+    }
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        commands: root.progress-path;
+        stroke: accent;
+        stroke-width: compact ? 4px : 5px;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+}
+
+export component PomodoroWindow inherits Window {
+    in-out property <length> target-width: 192px;
+    in-out property <string> progress-path: "M 26 2 A 24 24 0 1 1 26 50 A 24 24 0 1 1 26 2";
+    in-out property <bool> dark;
+    in-out property <bool> expanded: true;
+    in-out property <bool> recovering;
+    in-out property <bool> running;
+    in-out property <bool> paused;
+    in-out property <bool> completed;
+    in-out property <string> phase-title;
+    in-out property <string> round-label;
+    in-out property <string> time-label;
+    in-out property <string> status-label;
+    in-out property <string> save-label;
+    in-out property <string> feedback;
+    in-out property <float> progress;
+    in-out property <color> accent: dark ? #91a7ff : #4263eb;
+
+    callback start-requested();
+    callback pause-requested();
+    callback resume-requested();
+    callback end-requested();
+    callback next-requested();
+    callback recovery-continue-requested();
+    callback recovery-pause-requested();
+    callback recovery-discard-requested();
+    callback toggle-requested();
+    callback settings-requested();
+    callback about-requested();
+
+    width: target-width;
+    height: expanded ? 300px : 88px;
+    background: dark ? #171b24 : #ffffff;
+
+    Rectangle {
+        background: dark ? #171b24 : #ffffff;
+        border-color: dark ? #394152 : #cbd3df;
+        border-width: 1px;
+        border-radius: 16px;
+
+        if expanded: VerticalLayout {
+            padding: 11px;
+            spacing: 7px;
+
+            Text {
+                text: phase-title + "  ·  " + round-label;
+                color: dark ? #f3f5f8 : #182236;
+                font-family: "Microsoft YaHei UI";
+                font-size: 14px;
+                font-weight: 700;
+                vertical-alignment: center;
+                height: 21px;
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: center;
+                height: 56px;
+
+                ProgressRing {
+                    progress: root.progress;
+                    dark: root.dark;
+                    compact: false;
+                    accent: root.accent;
+                    progress-path: root.progress-path;
+                }
+
+                Text {
+                    text: root.time-label;
+                    color: dark ? #f3f5f8 : #182236;
+                    font-family: "Microsoft YaHei UI";
+                    font-size: 25px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+
+            Text {
+                text: root.recovering ? "选择恢复方式" : root.status-label + "  ·  " + root.save-label;
+                color: dark ? #b4bdcc : #596579;
+                font-family: "Microsoft YaHei UI";
+                font-size: 12px;
+                height: 16px;
+                vertical-alignment: center;
+            }
+
+            if recovering: HorizontalLayout {
+                spacing: 6px;
+                height: 38px;
+                ActionButton {
+                    label: "继续";
+                    primary: true;
+                    dark: root.dark;
+                    clicked => { root.recovery-continue-requested(); }
+                }
+                ActionButton {
+                    label: "保持暂停";
+                    primary: false;
+                    dark: root.dark;
+                    clicked => { root.recovery-pause-requested(); }
+                }
+            }
+            if !recovering: ActionButton {
+                height: 40px;
+                label: root.completed ? "下一段" : (root.running ? "暂停" : (root.paused ? "继续" : "开始"));
+                primary: true;
+                dark: root.dark;
+                clicked => {
+                    if (root.completed) { root.next-requested(); }
+                    else if (root.running) { root.pause-requested(); }
+                    else if (root.paused) { root.resume-requested(); }
+                    else { root.start-requested(); }
+                }
+            }
+
+            if recovering: Text {
+                text: "放弃本段";
+                color: dark ? #ffb4bd : #b42335;
+                font-family: "Microsoft YaHei UI";
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                height: 17px;
+                TouchArea { clicked => { root.recovery-discard-requested(); } }
+            }
+            if !recovering: HorizontalLayout {
+                spacing: 7px;
+                height: 32px;
+                ActionButton {
+                    label: "提前结束";
+                    primary: false;
+                    dark: root.dark;
+                    enabled: root.running || root.paused;
+                    clicked => { root.end-requested(); }
+                }
+                ActionButton {
+                    label: "设置";
+                    primary: false;
+                    dark: root.dark;
+                    clicked => { root.settings-requested(); }
+                }
+            }
+
+            Text {
+                text: root.feedback;
+                color: dark ? #ffb4bd : #b42335;
+                font-family: "Microsoft YaHei UI";
+                font-size: 11px;
+                visible: root.feedback != "";
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                height: 15px;
+            }
+
+            HorizontalLayout {
+                spacing: 0px;
+                Text {
+                    text: "关于";
+                    color: dark ? #91a7ff : #4263eb;
+                    font-family: "Microsoft YaHei UI";
+                    font-size: 12px;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    TouchArea { clicked => { root.about-requested(); } }
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                Text {
+                    text: "收起";
+                    color: dark ? #91a7ff : #4263eb;
+                    font-family: "Microsoft YaHei UI";
+                    font-size: 12px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    TouchArea { clicked => { root.toggle-requested(); } }
+                }
+            }
+        }
+
+        if !expanded: HorizontalLayout {
+            padding: 8px;
+            spacing: 8px;
+            alignment: center;
+
+            ProgressRing {
+                progress: root.progress;
+                dark: root.dark;
+                compact: true;
+                accent: root.accent;
+                progress-path: root.progress-path;
+            }
+            Text {
+                text: root.time-label;
+                color: dark ? #f3f5f8 : #182236;
+                font-family: "Microsoft YaHei UI";
+                font-size: 19px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Text {
+                text: "展开";
+                color: dark ? #91a7ff : #4263eb;
+                font-family: "Microsoft YaHei UI";
+                font-size: 12px;
+                vertical-alignment: center;
+                TouchArea { clicked => { root.toggle-requested(); } }
+            }
+        }
+    }
+}
+
+component SettingRow inherits Rectangle {
+    in-out property <bool> dark;
+    in-out property <string> title;
+    in-out property <int> value;
+    in-out property <string> suffix;
+    callback decrement();
+    callback increment();
+    height: 38px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: 5px;
+        Text {
+            text: root.title;
+            color: root.dark ? #f3f5f8 : #182236;
+            font-family: "Microsoft YaHei UI";
+            font-size: 13px;
+            vertical-alignment: center;
+            width: 64px;
+        }
+        ActionButton { label: "−"; primary: false; dark: root.dark; width: 30px; height: 32px; clicked => { root.decrement(); } }
+        Text {
+            text: root.value + " " + root.suffix;
+            color: root.dark ? #f3f5f8 : #182236;
+            font-family: "Microsoft YaHei UI";
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 74px;
+        }
+        ActionButton { label: "+"; primary: false; dark: root.dark; width: 30px; height: 32px; clicked => { root.increment(); } }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    in-out property <bool> dark;
+    in-out property <int> focus-minutes: 25;
+    in-out property <int> short-minutes: 5;
+    in-out property <int> long-minutes: 15;
+    in-out property <int> rounds: 4;
+    callback focus-delta(int);
+    callback short-delta(int);
+    callback long-delta(int);
+    callback rounds-delta(int);
+    callback close-requested();
+
+    width: 248px;
+    height: 310px;
+    background: dark ? #171b24 : #ffffff;
+
+    Rectangle {
+        background: dark ? #171b24 : #ffffff;
+        border-color: dark ? #394152 : #cbd3df;
+        border-width: 1px;
+        border-radius: 14px;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+            Text {
+                text: "计时设置";
+                color: dark ? #f3f5f8 : #182236;
+                font-family: "Microsoft YaHei UI";
+                font-size: 18px;
+                font-weight: 700;
+                height: 26px;
+            }
+            SettingRow { dark: root.dark; title: "专注"; value: root.focus-minutes; suffix: "分钟"; decrement => { root.focus-delta(-1); } increment => { root.focus-delta(1); } }
+            SettingRow { dark: root.dark; title: "短休"; value: root.short-minutes; suffix: "分钟"; decrement => { root.short-delta(-1); } increment => { root.short-delta(1); } }
+            SettingRow { dark: root.dark; title: "长休"; value: root.long-minutes; suffix: "分钟"; decrement => { root.long-delta(-1); } increment => { root.long-delta(1); } }
+            SettingRow { dark: root.dark; title: "长休间隔"; value: root.rounds; suffix: "轮"; decrement => { root.rounds-delta(-1); } increment => { root.rounds-delta(1); } }
+            ActionButton {
+                label: "完成";
+                primary: true;
+                dark: root.dark;
+                height: 38px;
+                clicked => { root.close-requested(); }
+            }
+        }
+    }
+}
+
+export component AboutWindow inherits Window {
+    in-out property <bool> dark;
+    callback close-requested();
+    width: 248px;
+    height: 170px;
+    background: dark ? #171b24 : #ffffff;
+    Rectangle {
+        background: dark ? #171b24 : #ffffff;
+        border-color: dark ? #394152 : #cbd3df;
+        border-width: 1px;
+        border-radius: 14px;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 9px;
+            Text { text: "番茄钟"; color: dark ? #f3f5f8 : #182236; font-family: "Microsoft YaHei UI"; font-size: 18px; font-weight: 700; height: 24px; }
+            Text { text: "界面由 Slint 支持 · Slint 1.19"; color: dark ? #b4bdcc : #596579; font-family: "Microsoft YaHei UI"; font-size: 13px; height: 20px; }
+            Text { text: "slint.dev"; color: dark ? #91a7ff : #4263eb; font-family: "Microsoft YaHei UI"; font-size: 13px; height: 20px; }
+            ActionButton { label: "关闭"; primary: true; dark: root.dark; height: 36px; clicked => { root.close-requested(); } }
+        }
+    }
+}

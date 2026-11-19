@@ -1,0 +1,443 @@
+mod application;
+mod domain;
+mod platform;
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use application::Application;
+use domain::{DomainEvent, RecoveryChoice, TimerSettings, TimerStatus};
+use platform::{clock_sample, logical_width, monitor_metrics, physical_window_width};
+use slint::{ComponentHandle, Timer, TimerMode};
+use uuid::Uuid;
+
+slint::include_modules!();
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let origin = Instant::now();
+    let application = Rc::new(RefCell::new(Application::new(TimerSettings::default())?));
+    let feedback = Rc::new(RefCell::new(String::new()));
+    let dark = Rc::new(Cell::new(platform::system_prefers_dark_theme()));
+    let expanded = Rc::new(Cell::new(true));
+
+    let main_window = PomodoroWindow::new()?;
+    let settings_window = SettingsWindow::new()?;
+    let about_window = AboutWindow::new()?;
+
+    main_window.set_dark(dark.get());
+    main_window.set_expanded(expanded.get());
+    settings_window.set_dark(dark.get());
+    about_window.set_dark(dark.get());
+    sync_main_window(&main_window, &application.borrow(), &feedback.borrow());
+    sync_settings_window(&settings_window, &application.borrow());
+
+    let (monitor_width, dpi) = monitor_metrics(&main_window.window());
+    resize_main_window(&main_window, monitor_width, dpi, expanded.get());
+
+    let main_weak = main_window.as_weak();
+    let settings_weak = settings_window.as_weak();
+    let about_weak = about_window.as_weak();
+
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_start_requested(move || {
+            let now = clock_sample(origin);
+            let result = application
+                .borrow_mut()
+                .start(Uuid::new_v4().to_string(), now);
+            set_result_feedback(&feedback, result.map(|_| ()), "开始");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_pause_requested(move || {
+            let result = application.borrow_mut().pause(clock_sample(origin));
+            let completed = matches!(result, Ok(DomainEvent::Completed(_)));
+            if completed {
+                feedback.borrow_mut().clear();
+            } else {
+                set_result_feedback(&feedback, result.map(|_| ()), "暂停");
+            }
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_resume_requested(move || {
+            let result = application.borrow_mut().resume(clock_sample(origin));
+            set_result_feedback(&feedback, result.map(|_| ()), "继续");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_end_requested(move || {
+            let result = application.borrow_mut().end_early(clock_sample(origin));
+            set_result_feedback(&feedback, result.map(|_| ()), "结束");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_next_requested(move || {
+            let result = application.borrow_mut().advance();
+            set_result_feedback(&feedback, result.map(|_| ()), "下一段");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_recovery_continue_requested(move || {
+            let result = application
+                .borrow_mut()
+                .resolve_recovery(RecoveryChoice::Continue, clock_sample(origin));
+            set_result_feedback(&feedback, result.map(|_| ()), "恢复");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_recovery_pause_requested(move || {
+            let result = application
+                .borrow_mut()
+                .resolve_recovery(RecoveryChoice::KeepPaused, clock_sample(origin));
+            set_result_feedback(&feedback, result.map(|_| ()), "保持暂停");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_recovery_discard_requested(move || {
+            let result = application
+                .borrow_mut()
+                .resolve_recovery(RecoveryChoice::Discard, clock_sample(origin));
+            set_result_feedback(&feedback, result.map(|_| ()), "放弃");
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+    {
+        let expanded = expanded.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_toggle_requested(move || {
+            expanded.set(!expanded.get());
+            if let Some(window) = main_weak.upgrade() {
+                window.set_expanded(expanded.get());
+                let (monitor_width, dpi) = monitor_metrics(&window.window());
+                resize_main_window(&window, monitor_width, dpi, expanded.get());
+            }
+        });
+    }
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let settings_weak = settings_weak.clone();
+        let main_weak = main_weak.clone();
+        main_window.on_settings_requested(move || {
+            if let Some(window) = settings_weak.upgrade() {
+                if application.borrow().timer.session.is_none() {
+                    sync_settings_window(&window, &application.borrow());
+                    window.show().ok();
+                } else {
+                    *feedback.borrow_mut() = "计时结束后可修改设置".to_owned();
+                    refresh_main(&main_weak, &application, &feedback);
+                }
+            }
+        });
+    }
+    {
+        let about_weak = about_weak.clone();
+        let dark = dark.clone();
+        main_window.on_about_requested(move || {
+            if let Some(window) = about_weak.upgrade() {
+                window.set_dark(dark.get());
+                window.show().ok();
+            }
+        });
+    }
+
+    connect_settings(&settings_window, &application, &feedback, &main_weak);
+    {
+        let settings_weak = settings_window.as_weak();
+        settings_window.on_close_requested(move || {
+            if let Some(window) = settings_weak.upgrade() {
+                window.hide().ok();
+            }
+        });
+    }
+    {
+        let about_weak = about_weak.clone();
+        about_window.on_close_requested(move || {
+            if let Some(window) = about_weak.upgrade() {
+                window.hide().ok();
+            }
+        });
+    }
+
+    let tick_timer = Timer::default();
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        tick_timer.start(TimerMode::Repeated, Duration::from_millis(200), move || {
+            let tick = application.borrow_mut().tick(clock_sample(origin));
+            if tick.completed.is_some() {
+                feedback.borrow_mut().clear();
+            }
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+
+    let platform_timer = Timer::default();
+    {
+        let main_weak = main_weak.clone();
+        let dark = dark.clone();
+        let expanded = expanded.clone();
+        let settings_weak = settings_weak.clone();
+        let about_weak = about_weak.clone();
+        let mut last_metrics = (monitor_width, dpi);
+        platform_timer.start(
+            TimerMode::Repeated,
+            Duration::from_millis(1_000),
+            move || {
+                let system_dark = platform::system_prefers_dark_theme();
+                if dark.replace(system_dark) != system_dark {
+                    if let Some(window) = main_weak.upgrade() {
+                        window.set_dark(system_dark);
+                    }
+                    if let Some(window) = settings_weak.upgrade() {
+                        window.set_dark(system_dark);
+                    }
+                    if let Some(window) = about_weak.upgrade() {
+                        window.set_dark(system_dark);
+                    }
+                }
+                if let Some(window) = main_weak.upgrade() {
+                    let metrics = monitor_metrics(&window.window());
+                    if metrics != last_metrics {
+                        last_metrics = metrics;
+                        resize_main_window(&window, metrics.0, metrics.1, expanded.get());
+                    }
+                }
+            },
+        );
+    }
+
+    main_window.show()?;
+    main_window.run()?;
+    Ok(())
+}
+
+fn connect_settings(
+    settings_window: &SettingsWindow,
+    application: &Rc<RefCell<Application>>,
+    feedback: &Rc<RefCell<String>>,
+    main_weak: &slint::Weak<PomodoroWindow>,
+) {
+    {
+        let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        settings_window.on_focus_delta(move |delta| {
+            if let Some(window) = settings_weak.upgrade() {
+                window.set_focus_minutes((window.get_focus_minutes() + delta).clamp(1, 180));
+                apply_settings(&window, &application, &feedback, &main_weak);
+            }
+        });
+    }
+    {
+        let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        settings_window.on_short_delta(move |delta| {
+            if let Some(window) = settings_weak.upgrade() {
+                window.set_short_minutes((window.get_short_minutes() + delta).clamp(1, 120));
+                apply_settings(&window, &application, &feedback, &main_weak);
+            }
+        });
+    }
+    {
+        let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        settings_window.on_long_delta(move |delta| {
+            if let Some(window) = settings_weak.upgrade() {
+                window.set_long_minutes((window.get_long_minutes() + delta).clamp(1, 180));
+                apply_settings(&window, &application, &feedback, &main_weak);
+            }
+        });
+    }
+    {
+        let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        settings_window.on_rounds_delta(move |delta| {
+            if let Some(window) = settings_weak.upgrade() {
+                window.set_rounds((window.get_rounds() + delta).clamp(1, 12));
+                apply_settings(&window, &application, &feedback, &main_weak);
+            }
+        });
+    }
+}
+
+fn apply_settings(
+    settings_window: &SettingsWindow,
+    application: &Rc<RefCell<Application>>,
+    feedback: &Rc<RefCell<String>>,
+    main_weak: &slint::Weak<PomodoroWindow>,
+) {
+    let settings = TimerSettings {
+        focus_minutes: settings_window.get_focus_minutes().max(1) as u32,
+        short_break_minutes: settings_window.get_short_minutes().max(1) as u32,
+        long_break_minutes: settings_window.get_long_minutes().max(1) as u32,
+        rounds_until_long_break: settings_window.get_rounds().max(1) as u8,
+    };
+    let result = application.borrow_mut().update_settings(settings);
+    set_result_feedback(feedback, result, "设置");
+    refresh_main(main_weak, application, feedback);
+}
+
+fn sync_settings_window(window: &SettingsWindow, application: &Application) {
+    window.set_focus_minutes(application.timer.settings.focus_minutes as i32);
+    window.set_short_minutes(application.timer.settings.short_break_minutes as i32);
+    window.set_long_minutes(application.timer.settings.long_break_minutes as i32);
+    window.set_rounds(application.timer.settings.rounds_until_long_break as i32);
+}
+
+fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback: &str) {
+    let timer = &application.timer;
+    let (remaining_ms, target_ms, round) = timer
+        .session
+        .as_ref()
+        .map(|session| (session.remaining_ms, session.target_ms, session.round))
+        .unwrap_or((
+            timer.settings.target_ms(timer.phase),
+            timer.settings.target_ms(timer.phase),
+            timer.round,
+        ));
+    window.set_phase_title(timer.phase.title().into());
+    window.set_round_label(format!("第 {round} 轮").into());
+    window.set_time_label(format_time(remaining_ms).into());
+    window.set_progress(if target_ms == 0 {
+        0.0
+    } else {
+        remaining_ms as f32 / target_ms as f32
+    });
+    window.set_progress_path(
+        progress_path(
+            if target_ms == 0 {
+                0.0
+            } else {
+                remaining_ms as f32 / target_ms as f32
+            },
+            !window.get_expanded(),
+        )
+        .into(),
+    );
+    let status = match timer.status() {
+        TimerStatus::Idle => "待开始",
+        TimerStatus::Running => "进行中",
+        TimerStatus::Paused => "已暂停",
+        TimerStatus::Completed => "已完成",
+        TimerStatus::Recovery => "等待恢复处理",
+    };
+    window.set_status_label(status.into());
+    window.set_save_label("待接入保存".into());
+    window.set_feedback(feedback.into());
+    window.set_running(timer.status() == TimerStatus::Running);
+    window.set_paused(timer.status() == TimerStatus::Paused);
+    window.set_completed(timer.status() == TimerStatus::Completed);
+    window.set_recovering(timer.status() == TimerStatus::Recovery);
+}
+
+fn refresh_main(
+    main_weak: &slint::Weak<PomodoroWindow>,
+    application: &Rc<RefCell<Application>>,
+    feedback: &Rc<RefCell<String>>,
+) {
+    if let Some(window) = main_weak.upgrade() {
+        sync_main_window(&window, &application.borrow(), &feedback.borrow());
+    }
+}
+
+fn set_result_feedback<T>(
+    feedback: &Rc<RefCell<String>>,
+    result: Result<T, domain::TimerError>,
+    action: &str,
+) {
+    *feedback.borrow_mut() = match result {
+        Ok(_) => String::new(),
+        Err(error) => format!("{action}失败：{}", timer_error_text(error)),
+    };
+}
+
+fn timer_error_text(error: domain::TimerError) -> &'static str {
+    match error {
+        domain::TimerError::InvalidSettings => "设置超出范围",
+        domain::TimerError::NoActiveSession => "当前没有活动计时",
+        domain::TimerError::AlreadyRunning => "当前状态不允许开始或修改设置",
+        domain::TimerError::NotRunning => "当前没有运行中的计时",
+        domain::TimerError::NotPaused => "当前计时没有暂停",
+        domain::TimerError::NotCompleted => "当前计时还未完成",
+        domain::TimerError::NotRecovering => "当前没有待恢复的计时",
+    }
+}
+
+fn format_time(remaining_ms: u64) -> String {
+    let total_seconds = remaining_ms.div_ceil(1_000);
+    format!("{:02}:{:02}", total_seconds / 60, total_seconds % 60)
+}
+
+fn progress_path(progress: f32, compact: bool) -> String {
+    let radius = if compact { 20.0_f32 } else { 24.0_f32 };
+    let center = radius + 2.0;
+    let normalized = progress.clamp(0.0, 1.0);
+    if normalized <= 0.0 {
+        return String::new();
+    }
+    if normalized >= 1.0 {
+        return format!(
+            "M {center} 2 A {radius} {radius} 0 1 1 {center} {} A {radius} {radius} 0 1 1 {center} 2",
+            center * 2.0 - 2.0
+        );
+    }
+
+    let angle = std::f32::consts::TAU * normalized;
+    let x = center + radius * angle.sin();
+    let y = center - radius * angle.cos();
+    let large_arc = if normalized > 0.5 { 1 } else { 0 };
+    format!("M {center} 2 A {radius} {radius} 0 {large_arc} 1 {x:.3} {y:.3}")
+}
+
+fn resize_main_window(window: &PomodoroWindow, monitor_width_px: u32, dpi: u32, expanded: bool) {
+    let width_px = physical_window_width(monitor_width_px as i32);
+    let width_dip = logical_width(width_px, dpi);
+    let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
+    let height_dip = if expanded { 300.0 } else { 88.0 };
+    let height_px = (height_dip * scale).round().max(1.0) as u32;
+    window.set_target_width(width_dip);
+    window
+        .window()
+        .set_size(slint::PhysicalSize::new(width_px, height_px));
+}
