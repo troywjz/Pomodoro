@@ -23,6 +23,8 @@
 
 接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。提交终结`session_record`会在同一事务清除活动checkpoint；同一请求同时提供checkpoint和终结记录属于无效请求。
 
+配置保留：每次成功写入`settings_json`均持久保留对应`settings_revision`、完整配置JSON和UTC更新时间；`export_json`输出全部配置版本及当前配置，不按时间或数量清理。
+
 备份失败发生在成功业务提交之后时，业务提交仍返回成功回执，backup_status显式报告失败。备份使用SQLite一致性备份API、完整性校验和成功标记；主库和历史保留。清历史保留活动/配置/回执与应用备份；永久清除的完整流程留在对应数据管理任务，M1基线不提供简化删除入口。
 
 ## 必须执行的验证
