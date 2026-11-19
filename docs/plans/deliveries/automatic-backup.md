@@ -12,7 +12,7 @@
 
 - SQLite 持久化活动 checkpoint、设置快照、终结 session 历史、分析事件、revision 与 `command_receipts`。
 - `commit` 使用单一 `IMMEDIATE` 事务完成 global/session/settings CAS、业务行、revision、事件和回执；同 ID 同 hash 回放首次回执，同 ID 异 hash 返回冲突。终结历史与调用方提供的最终 checkpoint 一起提交；最终 checkpoint 为空时清除旧活动 checkpoint。
-- 已有有效库打开时生成启动备份；终结 session 成功提交后生成备份；运行期间由 `maybe_auto_backup` 执行 24 小时且有变更的备份检查。SQLite 在线备份完成后执行 `integrity_check`、schema 与表可读检查，再用不覆盖已存在文件的方式发布到 `backups`。备份失败保留成功业务回执，并由 `BackupStatus::Failed` 提供错误文本及重试路径。
+- 已有有效库打开时生成启动备份；终结 session 成功提交后生成备份；运行期间由 `maybe_auto_backup` 执行 24 小时且有变更的备份检查。SQLite 在线备份完成后执行 `integrity_check`、schema 与表可读检查，再用不覆盖已存在文件的方式发布到 `backups`。发布使用同目录硬链接，本机NTFS已验证；文件系统不支持硬链接时返回 `BackupStatus::Failed`，已提交的主数据和成功回执保留，并提供重试路径。
 - 自动备份不会清理旧备份或历史行。JSON 导出在一致性读事务中包含 state、全部设置版本、session 历史和事件，并以临时文件完成原子落盘；写入前拒绝规范化后落在主库、WAL/SHM/journal sidecar 和应用 `backups` 子树的目的地。
 
 ## 技术依赖
