@@ -232,11 +232,14 @@ export component PomodoroWindow inherits Window {
         }
 
         if !expanded: WindowMoveArea {
-            HorizontalLayout {
-                padding: 7 * root.layout-scale * 1px;
-                spacing: 8 * root.layout-scale * 1px;
-                alignment: center;
-                ProgressRing {
+            Rectangle {
+                width: expand-button.x + expand-button.width;
+                height: parent.height;
+                x: (parent.width - self.width) / 2;
+
+                compact-ring := ProgressRing {
+                    x: 0px;
+                    y: (parent.height - self.height) / 2;
                     progress: root.progress;
                     dark: root.dark;
                     compact: true;
@@ -244,16 +247,30 @@ export component PomodoroWindow inherits Window {
                     accent: root.accent;
                     progress-path: root.progress-path;
                 }
-                Text {
+                compact-time := Text {
+                    x: compact-ring.width + 7 * root.layout-scale * 1px;
+                    y: (parent.height - self.height) / 2;
+                    width: 66 * root.layout-scale * 1px;
+                    height: expand-button.height;
                     text: root.time-label;
                     color: dark ? #f3f5f8 : #182236;
                     font-family: "Microsoft YaHei UI";
                     accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
                     font-size: 19 * root.layout-scale * 1px;
                     font-weight: 700;
+                    horizontal-alignment: center;
                     vertical-alignment: center;
                 }
-                ActionButton { label: "展开"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 38 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
+                expand-button := ActionButton {
+                    x: compact-time.x + compact-time.width + 7 * root.layout-scale * 1px;
+                    y: (parent.height - self.height) / 2;
+                    width: 44 * root.layout-scale * 1px;
+                    height: 38 * root.layout-scale * 1px;
+                    label: "展开";
+                    dark: root.dark;
+                    font-scale: root.layout-scale;
+                    clicked => { root.toggle-requested(); }
+                }
             }
         }
     }

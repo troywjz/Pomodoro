@@ -337,20 +337,16 @@ impl Application {
     }
 
     pub fn feedback(&self) -> String {
-        let mut messages = Vec::new();
-        if let Some(message) = &self.last_runtime_message {
-            messages.push(message.clone());
+        if self.last_save_error.is_some() {
+            return "保存失败，正在重试。".to_owned();
         }
         if self.pending.is_some() {
-            messages.push("本地保存正在重试".to_owned());
-        }
-        if let Some(error) = &self.last_save_error {
-            messages.push(error.clone());
+            return "正在重试保存。".to_owned();
         }
         if let BackupStatus::Failed { .. } = &self.last_backup_status {
-            messages.push("备份失败，主数据已保存。稍后重试。".to_owned());
+            return "备份失败，主数据已保存。稍后重试。".to_owned();
         }
-        messages.join("；")
+        self.last_runtime_message.clone().unwrap_or_default()
     }
 
     fn ensure_no_pending(&mut self) -> Result<(), ApplicationError> {

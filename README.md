@@ -19,6 +19,6 @@ Figma不可用时采用可编辑SVG；[精简设计 PR #23](https://github.com/t
 
 在 Windows MSVC 工具链下运行 `cargo run --locked`。已有计时数据可通过 `cargo run --locked -- --export-json .\pomodoro-analysis.json` 导出，包含会话历史、事件、配置版本和时间字段。自动备份与历史默认保留，具体触发条件见交付记录。
 
-直接打开 Windows 可执行文件会显示无系统标题栏的计时窗。拖动计时显示区即可移动窗口。使用界面内的退出按钮或 Alt+F4 时，程序先保存当前进度，随后关闭。下次打开可从上次保存的进度继续。
+直接打开 Windows 可执行文件会显示无系统标题栏的计时窗。可在顶部阶段标题或收起后的显示区拖动窗口。使用界面内的退出按钮或 Alt+F4 时，程序先保存当前进度，随后关闭。下次打开可从上次保存的进度继续。
 
 项目自身源码保持MIT；Slint按已选的[Royalty-free 2.0桌面路线](https://slint.dev/terms-and-conditions#slint-royalty-free-license-2-0)使用，以上为官方提供的公开网页署名徽章。其他依赖保留各自许可与版权信息。

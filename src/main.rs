@@ -126,8 +126,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(window) = main_weak.upgrade() {
                 let old_height = window.get_target_height();
                 window.set_expanded(true);
-                set_result_feedback(&feedback, result, "退出");
-                sync_main_window(&window, &application.borrow(), &feedback.borrow());
+                let application = application.borrow();
+                *feedback.borrow_mut() = if application.feedback().is_empty() {
+                    "退出前保存失败，请重试。".to_owned()
+                } else {
+                    String::new()
+                };
+                sync_main_window(&window, &application, &feedback.borrow());
                 if window.get_target_height() != old_height {
                     apply_main_size(&window, window.window().scale_factor());
                 }
