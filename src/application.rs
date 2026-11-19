@@ -292,6 +292,7 @@ impl Application {
         now: ClockSample,
     ) -> Result<(), ApplicationError> {
         self.ensure_no_pending()?;
+        settings.validate()?;
         let mut candidate = self.timer.clone();
         candidate.settings = settings.clone();
         let event = DomainEvent::SettingsChanged(settings.clone());

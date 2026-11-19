@@ -180,9 +180,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     {
         let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
         settings_window.on_close_requested(move || {
             if let Some(window) = settings_weak.upgrade() {
-                window.hide().ok();
+                cancel_settings(&window, &application, &feedback, &main_weak);
             }
         });
     }
@@ -270,74 +273,86 @@ fn connect_settings(
 ) {
     {
         let settings_weak = settings_window.as_weak();
-        let application = application.clone();
-        let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
         settings_window.on_focus_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
                 window.set_focus_minutes((window.get_focus_minutes() + delta).clamp(1, 180));
-                apply_settings(&window, &application, &feedback, &main_weak, origin);
             }
         });
     }
     {
         let settings_weak = settings_window.as_weak();
-        let application = application.clone();
-        let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
         settings_window.on_short_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
-                window.set_short_minutes((window.get_short_minutes() + delta).clamp(1, 120));
-                apply_settings(&window, &application, &feedback, &main_weak, origin);
+                window.set_short_minutes((window.get_short_minutes() + delta).clamp(1, 60));
             }
         });
     }
     {
         let settings_weak = settings_window.as_weak();
-        let application = application.clone();
-        let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
         settings_window.on_long_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
-                window.set_long_minutes((window.get_long_minutes() + delta).clamp(1, 180));
-                apply_settings(&window, &application, &feedback, &main_weak, origin);
+                window.set_long_minutes((window.get_long_minutes() + delta).clamp(1, 120));
             }
         });
     }
     {
         let settings_weak = settings_window.as_weak();
-        let application = application.clone();
-        let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
         settings_window.on_rounds_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
                 window.set_rounds((window.get_rounds() + delta).clamp(1, 12));
-                apply_settings(&window, &application, &feedback, &main_weak, origin);
+            }
+        });
+    }
+
+    {
+        let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        settings_window.on_save_requested(move |focus, short_break, long_break, rounds| {
+            let settings = TimerSettings {
+                focus_minutes: u32::try_from(focus).unwrap_or(0),
+                short_break_minutes: u32::try_from(short_break).unwrap_or(0),
+                long_break_minutes: u32::try_from(long_break).unwrap_or(0),
+                rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
+            };
+            let result = application
+                .borrow_mut()
+                .update_settings(settings, clock_sample(origin));
+            let saved = result.is_ok();
+            set_result_feedback(&feedback, result, "设置");
+            if saved {
+                if let Some(window) = settings_weak.upgrade() {
+                    sync_settings_window(&window, &application.borrow());
+                    window.hide().ok();
+                }
+            }
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+
+    {
+        let settings_weak = settings_window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        settings_window.on_cancel_requested(move || {
+            if let Some(window) = settings_weak.upgrade() {
+                cancel_settings(&window, &application, &feedback, &main_weak);
             }
         });
     }
 }
 
-fn apply_settings(
+fn cancel_settings(
     settings_window: &SettingsWindow,
     application: &Rc<RefCell<Application>>,
     feedback: &Rc<RefCell<String>>,
     main_weak: &slint::Weak<PomodoroWindow>,
-    origin: Instant,
 ) {
-    let settings = TimerSettings {
-        focus_minutes: settings_window.get_focus_minutes().max(1) as u32,
-        short_break_minutes: settings_window.get_short_minutes().max(1) as u32,
-        long_break_minutes: settings_window.get_long_minutes().max(1) as u32,
-        rounds_until_long_break: settings_window.get_rounds().max(1) as u8,
-    };
-    let result = application
-        .borrow_mut()
-        .update_settings(settings, clock_sample(origin));
-    set_result_feedback(feedback, result, "设置");
-    if let Some(window) = settings_window.as_weak().upgrade() {
-        sync_settings_window(&window, &application.borrow());
-    }
+    sync_settings_window(settings_window, &application.borrow());
+    settings_window.hide().ok();
+    feedback.borrow_mut().clear();
     refresh_main(main_weak, application, feedback);
 }
 
