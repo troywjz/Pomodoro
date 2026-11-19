@@ -1,17 +1,30 @@
 # 模块责任与依赖
 
-组织分组已采用；代码目录和具体实现接口保持架构候选，业务开发待批准。
+状态：`M0-Contracts v1.0.1` 候选；待产品输入、用户批准 M0 候选技术路线/完整设计及 M1 启动授权。共享字段唯一来源为[模块接口与数据契约提案](../interface-contract.md)。获批启动 M1 后建立工程并执行验证。
 
-| 逻辑模块 | 责任 | 显式排除 |
-| --- | --- | --- |
-| domain | 纯计时、阶段/轮次、状态、注入Clock | Windows、UI和DB副作用 |
-| application | 串行命令、候选状态、存储回执、effects、恢复/退出/数据流程 | 直接操纵控件或SQLite细节 |
-| platform/windows | 窗口/主题/DPI、托盘、单实例、系统事件采集 | 自行推进业务倒计时 |
-| storage | Repository、事务/schema/迁移、备份、查询 | 自行定义统计口径 |
-| ui | Slint视图、主题、布局、交互、辅助技术 | 第二份计时状态或直接平台/DB访问 |
+| 逻辑模块 | 候选责任 | 显式边界 |
+|---|---|---|
+| domain | 纯计时状态转移、阶段/轮次、revision 计算、接收注入的 `ClockSample` | 不调用 Windows、UI、DB 或时钟全局 API |
+| application | 串行命令、expected revision 校验、候选快照、持久化请求/回执、effect 顺序、恢复/退出协调 | 不直接操纵控件或 SQLite 细节；不定义产品统计语义 |
+| platform/windows | 时钟/系统事件采集、主题/DPI/显示器几何、托盘、窗口、单实例 | 不自行推进业务计时；系统采样能力待实测 |
+| storage | Repository、SQLite 事务/CAS、schema迁移、一致性备份及查询 | 不定义统计口径；字段以统一契约为准 |
+| ui | Slint 视图、布局、操作、辅助技术、渲染 | 不维护第二份计时状态；不直接访问平台或存储 API |
 
-计时与应用分组可共同维护domain/application，保留纯内核与副作用协调边界。统计含义由产品确定，application组织，storage按契约查询。
+```text
+platform/windows -> ClockSample, ThemeSnapshot, LogicalRect -> application
+ui -> CommandEnvelope -> application -> TimerSnapshot -> ui
+application -> PersistRequest -> storage -> PersistReceipt -> application
+application -> pure domain transition(Command, ClockSample) -> candidate + effects
+```
 
-application是跨层状态转换的唯一协调者：系统事件入串行队列，核心输出候选状态/effects，Repository确认事务后发布已保存结果，UI消费同源快照。
+application 是跨层状态转换的唯一协调者。持久业务转换在 Storage 成功提交且回执通过 command/revision 核验后发布；运行 Tick 更新只推进内存运行态序号，持久 session revision 仅由成功 checkpoint 推进。UI/托盘展示同一 TimerSnapshot，其中标记 clean/saving/unsaved 与最近持久 checkpoint。通知 effects 在业务事务提交后执行。统计由产品与交互设计定义含义，application 组织调用，storage 按字段查询。
 
-共享接口见[契约入口](../contracts/README.md)。当前只建文档，代码结构、renderer、许可和API版本待架构批准后锁定。
+| 下游任务 | 依赖契约版本 | 前置输入/验收 |
+|---|---|---|
+| 产品/交互设计 | M0-Contracts v1.0.1 字段占位 | 冻结统计、清理取消、导出及 Idle/轮次语义，形成产品字段定义与 AC |
+| Domain/Application | 用户批准 M1 后采用的 Command、ClockSample、TimerSnapshot、revision/CAS | M1 假时钟、重复/陈旧命令、事务失败、恢复/退出时序 |
+| Storage | 用户批准 M1 后采用的实体/schema与 PersistRequest/Receipt | M1 迁移、CAS、重复session、强杀恢复、备份一致性、导出范围 |
+| Windows 平台 | ClockSample、ThemeSnapshot、LogicalRect | suspend/resume、漏通知、混合DPI、多屏、主题变化和窗口恢复实测 |
+| Slint UI | 批准后的 TimerSnapshot、ThemeSnapshot、Geometry | UI v2已确定方向维持；中文字体、无障碍文本和路径支持作为 M1 renderer 准入；具体 renderer 经目标机与 Hyper-V 工程验证收敛 |
+
+候选依赖及许可证比较见[统一契约第6节](../interface-contract.md#6-依赖边界与模块引用)与[评审包](../contracts/review-packet.md)。先由用户批准 M0 候选技术路线/完整设计及 M1 启动；再创建 Cargo 工程、业务源码和实现型试验。M1 工程证据用于收敛 crate/API 版本、renderer 和 SQLite durability，结果再提交架构细节审批。

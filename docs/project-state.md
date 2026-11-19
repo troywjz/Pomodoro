@@ -3,10 +3,11 @@
 ## 当前阶段
 
 - 组织重整已获用户授权，采用稳定模块责任、短任务session和有限并行。
-- 当前是需求/设计/架构评审阶段，没有Rust/Slint业务源码或Cargo工程。
+- 当前 Lead 为项目管理入口；产品与交互设计 #18、工程契约 #19 已在独立 session/工作树交付 M0 候选并开展独立复核，分工见[M0 任务分配 v2](plans/active/m0-task-allocation.md)。
+- 用户于2026-11-18批准M0并要求继续推进：SVG替代不可用的Figma、界面精简、自动备份与充分保留本地分析数据。当前进入M1首轮实施，见[批准记录](product/approval-20261118.md)与[任务分配](plans/active/m1-dispatch.md)。
 - 用户确定UI四项方向：时间前圆圈、按钮文字居中、跟随系统主题且默认浅色、展开/收起同宽并按所在屏宽10%比例适配。
-- UI v2本地SVG/PNG已有独立检查；Figma v2原生同步待编辑通道恢复，全状态/热区等证据见登记。
-- 业务细节、架构、依赖与许可待用户批准；组织授权保持原编码门槛。PR合并和发布仍由用户审批。
+- UI v2.1 本地浅深各九状态 SVG/PNG 已渲染、计算及目视，与契约 v1.0.1 均通过独立候选复核，见[本轮审查](quality/m0-review-20261118.md)。Figma 本轮实际返回 Starter MCP 额度限制，原生同步待完成。
+- M0产品/技术路线按用户批准推进，设计增量及自动备份要求纳入本轮；工程具体版本、资源与Windows行为以实际验证收敛。PR合并和发布仍由用户审批，分别邀请jasonaiseeker评审。
 
 ## 最小阅读
 
@@ -23,7 +24,7 @@
 - [Figma](https://www.figma.com/design/4U9TTroE0k4Rkef4K9LIG7/Pomodoro)：v1原生稿；v2同步状态单独登记。
 - [GitHub Issues](https://github.com/troywjz/Pomodoro/issues)：任务与依赖。
 - 本轮统一文档/设计基线通过独立PR提交，保持未合并，main不直接推进。
-- [统一基线 PR #21](https://github.com/troywjz/Pomodoro/pull/21)替代已关闭PR #17；当前只保留M0-UI #18、契约 #19和等待依赖的后续基线 #20。
+- [统一基线 PR #21](https://github.com/troywjz/Pomodoro/pull/21)已合并至main（`7afe7ee`）；本地M0候选作为后续批准规格PR提交，设计、自动备份和M1基线各用独立PR交付。
 
 ## 下一步
 
@@ -32,3 +33,5 @@
 3. 批准后建可运行基线，按3个实现任务并行起步，尽早集成开始→暂停→继续→完成→保存→重启恢复。
 
 组织恢复记录见[整理记录](team/cleanup-report.md)。后续Lead读取此页、任务说明及必要决策接续，历史聊天归档保存。
+
+M0评审输入见[原审批清单](plans/active/m0-user-decisions.md)，当前用户批准及新增要求见[批准记录](product/approval-20261118.md)。执行任务按M1分配及独立PR推进。
