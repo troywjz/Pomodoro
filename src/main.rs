@@ -357,10 +357,15 @@ fn cancel_settings(
 }
 
 fn sync_settings_window(window: &SettingsWindow, application: &Application) {
-    window.set_focus_minutes(application.timer.settings.focus_minutes as i32);
-    window.set_short_minutes(application.timer.settings.short_break_minutes as i32);
-    window.set_long_minutes(application.timer.settings.long_break_minutes as i32);
-    window.set_rounds(application.timer.settings.rounds_until_long_break as i32);
+    let settings = &application.timer.settings;
+    window.set_focus_minutes(settings.focus_minutes as i32);
+    window.set_short_minutes(settings.short_break_minutes as i32);
+    window.set_long_minutes(settings.long_break_minutes as i32);
+    window.set_rounds(settings.rounds_until_long_break as i32);
+    window.set_draft_focus(settings.focus_minutes as i32);
+    window.set_draft_short(settings.short_break_minutes as i32);
+    window.set_draft_long(settings.long_break_minutes as i32);
+    window.set_draft_rounds(settings.rounds_until_long_break as i32);
 }
 
 fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback: &str) {
@@ -464,15 +469,23 @@ fn progress_path(progress: f32, compact: bool) -> String {
 }
 
 fn resize_main_window(window: &PomodoroWindow, monitor_width_px: u32, dpi: u32, expanded: bool) {
-    let width_px = physical_window_width(monitor_width_px as i32);
-    let width_dip = logical_width(width_px, dpi);
-    let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
-    let height_dip = if expanded { 300.0 } else { 88.0 };
-    let height_px = (height_dip * scale).round().max(1.0) as u32;
+    let (width_px, height_px, width_dip) = window_dimensions(monitor_width_px, dpi, expanded);
     window.set_target_width(width_dip);
     window
         .window()
         .set_size(slint::PhysicalSize::new(width_px, height_px));
+}
+
+fn window_dimensions(monitor_width_px: u32, dpi: u32, expanded: bool) -> (u32, u32, f32) {
+    let width_px = physical_window_width(monitor_width_px as i32);
+    let width_dip = logical_width(width_px, dpi);
+    let layout_scale = width_dip / 192.0;
+    let dpi_scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
+    let base_height_dip = if expanded { 300.0 } else { 88.0 };
+    let height_px = (base_height_dip * layout_scale * dpi_scale)
+        .round()
+        .max(1.0) as u32;
+    (width_px, height_px, width_dip)
 }
 
 fn data_directory() -> Result<PathBuf, io::Error> {
@@ -497,5 +510,18 @@ fn data_directory() -> Result<PathBuf, io::Error> {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("pomodoro-data"));
         Ok(base.join("Pomodoro"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_dimensions;
+
+    #[test]
+    fn ten_percent_window_scales_height_at_small_and_high_dpi_sizes() {
+        assert_eq!(window_dimensions(1366, 96, true), (137, 214, 137.0));
+        assert_eq!(window_dimensions(1366, 96, false), (137, 63, 137.0));
+        assert_eq!(window_dimensions(2560, 120, true), (256, 400, 204.8));
+        assert_eq!(window_dimensions(3840, 144, true), (384, 600, 256.0));
     }
 }

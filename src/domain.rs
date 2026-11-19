@@ -357,6 +357,7 @@ impl TimerCore {
         }
         session.status = SessionStatus::Running;
         session.last_sample_monotonic_ms = sample.monotonic_ms;
+        session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
         Ok(DomainEvent::Resumed {
             session_id: session.session_id.clone(),
         })

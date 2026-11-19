@@ -327,6 +327,11 @@ impl Application {
         } else if self.timer.status() == TimerStatus::Recovery {
             messages.push("上次退出时存在未完成计时，请选择恢复方式".to_owned());
         }
+        if self.pending.is_some() {
+            messages.push("本地保存正在重试".to_owned());
+        } else if self.runtime_dirty {
+            messages.push("计时进度待保存".to_owned());
+        }
         if let Some(error) = &self.last_save_error {
             messages.push(error.clone());
         }
@@ -635,7 +640,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::domain::{Phase, RecoveryReason, SessionStatus, TimerStatus};
+    use crate::domain::{Phase, SessionStatus, TimerStatus};
 
     fn sample(monotonic_ms: u64, utc_ms: i64) -> ClockSample {
         ClockSample {
