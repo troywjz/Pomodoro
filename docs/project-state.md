@@ -7,7 +7,7 @@
 - 用户于2026-11-18批准M0并要求继续推进：SVG替代不可用的Figma、界面精简、自动备份与充分保留本地分析数据。当前进入M1首轮实施，见[批准记录](product/approval-20261118.md)与[任务分配](plans/active/m1-dispatch.md)。
 - 用户确定UI四项方向：时间前圆圈、按钮文字居中、跟随系统主题且默认浅色、展开/收起同宽并按所在屏宽10%比例适配。
 - UI v2.1 本地浅深各九状态 SVG/PNG 已渲染、计算及目视，与契约 v1.0.1 均通过独立候选复核，见[本轮审查](quality/m0-review-20261118.md)。Figma 本轮实际返回 Starter MCP 额度限制，原生同步待完成。
-- M0产品/技术路线按用户批准推进，设计增量及自动备份要求纳入本轮；工程具体版本、资源与Windows行为以实际验证收敛。PR合并和发布仍由用户审批，分别邀请jasonaiseeker评审。
+- M1 Windows 调试构建、计时与真实存储链路已验证，见[交付记录](plans/deliveries/m1-foundation.md)。用户于2026-11-19授权直接合并本轮PR。正式发布继续由用户审批。
 
 ## 最小阅读
 
@@ -23,7 +23,7 @@
 - [Notion项目](https://www.notion.so/41be33444f5f80698ee7d99318343c08)：需求与审批。
 - [Figma](https://www.figma.com/design/4U9TTroE0k4Rkef4K9LIG7/Pomodoro)：v1原生稿；v2同步状态单独登记。
 - [GitHub Issues](https://github.com/troywjz/Pomodoro/issues)：任务与依赖。
-- 本轮统一文档/设计基线通过独立PR提交，保持未合并，main不直接推进。
+- 本轮通过独立PR交付各职责，最终基线PR汇入main。真实睡眠、Hyper-V、多屏、资源与其他MVP验收按相应验证任务跟踪。
 - [统一基线 PR #21](https://github.com/troywjz/Pomodoro/pull/21)已合并至main（`7afe7ee`）；本地M0候选作为后续批准规格PR提交，设计、自动备份和M1基线各用独立PR交付。
 
 ## 下一步
