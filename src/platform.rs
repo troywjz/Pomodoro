@@ -5,7 +5,7 @@ use chrono::{Local, Utc};
 use crate::domain::ClockSample;
 
 #[cfg(windows)]
-pub fn clock_sample(origin: Instant) -> ClockSample {
+pub fn clock_sample(_origin: Instant) -> ClockSample {
     use std::sync::OnceLock;
 
     use windows_sys::Win32::System::SystemInformation::GetTickCount64;
