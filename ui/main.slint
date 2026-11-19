@@ -3,7 +3,7 @@ component ActionButton inherits Rectangle {
     in-out property <bool> primary;
     in-out property <bool> dark;
     in-out property <bool> enabled: true;
-    in-out property <float> scale-factor: 1.0;
+    in-out property <float> font-scale: 1;
     callback clicked();
     out property <bool> has-focus: button-focus.has-focus;
     forward-focus: button-focus;
@@ -15,11 +15,10 @@ component ActionButton inherits Rectangle {
     background: !enabled ? (dark ? #252a34 : #e8ebf0)
         : primary ? (dark ? #91a7ff : #4263eb)
         : (dark ? #252c39 : #edf1ff);
-    border-color: root.has-focus ? (dark ? #f3f5f8 : #182236)
-        : (primary ? (dark ? #91a7ff : #4263eb)
-        : (dark ? #394152 : #cbd3df));
-    border-width: (root.has-focus ? 2 : 1) * root.scale-factor * 1px;
-    border-radius: root.scale-factor * 9px;
+    border-color: primary ? (dark ? #91a7ff : #4263eb)
+        : (dark ? #394152 : #cbd3df);
+    border-width: 1px;
+    border-radius: 9 * root.font-scale * 1px;
 
     Text {
         text: label;
@@ -27,7 +26,7 @@ component ActionButton inherits Rectangle {
             : primary ? (dark ? #151a25 : #ffffff)
             : (dark ? #f3f5f8 : #182236);
         font-family: "Microsoft YaHei UI";
-        font-size: 14 * root.scale-factor * 1px;
+        font-size: 14 * root.font-scale * 1px;
         font-weight: 700;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -49,6 +48,16 @@ component ActionButton inherits Rectangle {
             return reject;
         }
     }
+    if root.has-focus: Rectangle {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        background: transparent;
+        border-color: root.dark ? #f3f5f8 : #182236;
+        border-width: 2px;
+        border-radius: root.border-radius;
+    }
 }
 
 component ProgressRing inherits Rectangle {
@@ -57,10 +66,10 @@ component ProgressRing inherits Rectangle {
     in-out property <bool> compact;
     in-out property <color> accent;
     in-out property <string> progress-path;
-    in-out property <float> scale-factor: 1.0;
+    in-out property <float> layout-scale: 1;
 
-    width: (compact ? 44px : 52px) * scale-factor;
-    height: (compact ? 44px : 52px) * scale-factor;
+    width: (compact ? 44 : 52) * layout-scale * 1px;
+    height: (compact ? 44 : 52) * layout-scale * 1px;
     background: transparent;
 
     Path {
@@ -70,7 +79,7 @@ component ProgressRing inherits Rectangle {
             ? "M 22 2 A 20 20 0 1 1 21.99 2"
             : "M 26 2 A 24 24 0 1 1 25.99 2";
         stroke: dark ? #343b49 : #e5eaf2;
-        stroke-width: (compact ? 4px : 5px) * root.scale-factor;
+        stroke-width: (compact ? 4 : 5) * root.layout-scale * 1px;
         fill: transparent;
     }
 
@@ -79,7 +88,7 @@ component ProgressRing inherits Rectangle {
         height: parent.height;
         commands: root.progress-path;
         stroke: accent;
-        stroke-width: (compact ? 4px : 5px) * root.scale-factor;
+        stroke-width: (compact ? 4 : 5) * root.layout-scale * 1px;
         stroke-line-cap: round;
         fill: transparent;
     }
@@ -117,14 +126,14 @@ export component PomodoroWindow inherits Window {
     callback about-requested();
 
     width: target-width;
-    height: expanded ? 300 * layout-scale * 1px : 88 * layout-scale * 1px;
+    height: expanded ? 300px : 88px;
     background: dark ? #171b24 : #ffffff;
 
     Rectangle {
         background: dark ? #171b24 : #ffffff;
         border-color: dark ? #394152 : #cbd3df;
-        border-width: root.layout-scale * 1px;
-        border-radius: root.layout-scale * 16px;
+        border-width: 1px;
+        border-radius: 16px;
 
         if expanded: VerticalLayout {
             padding: 11 * root.layout-scale * 1px;
@@ -149,9 +158,9 @@ export component PomodoroWindow inherits Window {
                     progress: root.progress;
                     dark: root.dark;
                     compact: false;
+                    layout-scale: root.layout-scale;
                     accent: root.accent;
                     progress-path: root.progress-path;
-                    scale-factor: root.layout-scale;
                 }
 
                 Text {
@@ -181,14 +190,14 @@ export component PomodoroWindow inherits Window {
                     label: "继续";
                     primary: true;
                     dark: root.dark;
-                    scale-factor: root.layout-scale;
+                    font-scale: root.layout-scale;
                     clicked => { root.recovery-continue-requested(); }
                 }
                 ActionButton {
                     label: "保持暂停";
                     primary: false;
                     dark: root.dark;
-                    scale-factor: root.layout-scale;
+                    font-scale: root.layout-scale;
                     clicked => { root.recovery-pause-requested(); }
                 }
             }
@@ -197,7 +206,7 @@ export component PomodoroWindow inherits Window {
                 label: root.completed ? "下一段" : (root.running ? "暂停" : (root.paused ? "继续" : "开始"));
                 primary: true;
                 dark: root.dark;
-                scale-factor: root.layout-scale;
+                font-scale: root.layout-scale;
                 clicked => {
                     if (root.completed) { root.next-requested(); }
                     else if (root.running) { root.pause-requested(); }
@@ -210,7 +219,7 @@ export component PomodoroWindow inherits Window {
                 label: "放弃本段";
                 primary: false;
                 dark: root.dark;
-                scale-factor: root.layout-scale;
+                font-scale: root.layout-scale;
                 height: 24 * root.layout-scale * 1px;
                 clicked => { root.recovery-discard-requested(); }
             }
@@ -221,7 +230,7 @@ export component PomodoroWindow inherits Window {
                     label: "提前结束";
                     primary: false;
                     dark: root.dark;
-                    scale-factor: root.layout-scale;
+                    font-scale: root.layout-scale;
                     enabled: root.running || root.paused;
                     clicked => { root.end-requested(); }
                 }
@@ -229,7 +238,7 @@ export component PomodoroWindow inherits Window {
                     label: "设置";
                     primary: false;
                     dark: root.dark;
-                    scale-factor: root.layout-scale;
+                    font-scale: root.layout-scale;
                     clicked => { root.settings-requested(); }
                 }
             }
@@ -238,7 +247,7 @@ export component PomodoroWindow inherits Window {
                 text: root.feedback;
                 color: dark ? #ffb4bd : #b42335;
                 font-family: "Microsoft YaHei UI";
-                font-size: 11 * root.layout-scale * 1px;
+                font-size: 12 * root.layout-scale * 1px;
                 visible: root.feedback != "";
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -247,9 +256,9 @@ export component PomodoroWindow inherits Window {
 
             HorizontalLayout {
                 spacing: 0px;
-                ActionButton { label: "关于"; primary: false; dark: root.dark; scale-factor: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.about-requested(); } }
+                ActionButton { label: "关于"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.about-requested(); } }
                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                ActionButton { label: "收起"; primary: false; dark: root.dark; scale-factor: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
+                ActionButton { label: "收起"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
             }
         }
 
@@ -262,20 +271,21 @@ export component PomodoroWindow inherits Window {
                 progress: root.progress;
                 dark: root.dark;
                 compact: true;
+                layout-scale: root.layout-scale;
                 accent: root.accent;
                 progress-path: root.progress-path;
-                scale-factor: root.layout-scale;
             }
             Text {
                 text: root.time-label;
                 color: dark ? #f3f5f8 : #182236;
                 font-family: "Microsoft YaHei UI";
+                accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
                 font-size: 19 * root.layout-scale * 1px;
                 font-weight: 700;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
-            ActionButton { label: "展开"; primary: false; dark: root.dark; scale-factor: root.layout-scale; height: 36 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
+            ActionButton { label: "展开"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 36 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
         }
     }
 }
@@ -332,7 +342,7 @@ export component SettingsWindow inherits Window {
     callback cancel-requested();
 
     width: 248px;
-    height: 330px;
+    height: 350px;
     background: dark ? #171b24 : #ffffff;
 
     Rectangle {
@@ -350,13 +360,6 @@ export component SettingsWindow inherits Window {
                 font-size: 18px;
                 font-weight: 700;
                 height: 26px;
-            }
-            Text {
-                text: "当前计时不变，新设置用于下一段";
-                color: dark ? #b4bdcc : #596579;
-                font-family: "Microsoft YaHei UI";
-                font-size: 11px;
-                height: 16px;
             }
             SettingRow { dark: root.dark; title: "专注"; value: root.draft-focus; suffix: "分钟"; decrement => { root.draft-focus = max(1, root.draft-focus - 1); } increment => { root.draft-focus = min(180, root.draft-focus + 1); } }
             SettingRow { dark: root.dark; title: "短休"; value: root.draft-short; suffix: "分钟"; decrement => { root.draft-short = max(1, root.draft-short - 1); } increment => { root.draft-short = min(60, root.draft-short + 1); } }
@@ -376,7 +379,7 @@ export component SettingsWindow inherits Window {
                 primary: false;
                 dark: root.dark;
                 height: 32px;
-                clicked => { root.cancel-requested(); root.close-requested(); }
+                clicked => { root.cancel-requested(); }
             }
         }
     }
