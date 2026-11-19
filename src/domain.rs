@@ -34,6 +34,8 @@ pub struct TimerSettings {
     pub short_break_minutes: u32,
     pub long_break_minutes: u32,
     pub rounds_until_long_break: u8,
+    #[serde(default)]
+    pub topmost: bool,
 }
 
 impl Default for TimerSettings {
@@ -43,6 +45,7 @@ impl Default for TimerSettings {
             short_break_minutes: 5,
             long_break_minutes: 15,
             rounds_until_long_break: 4,
+            topmost: false,
         }
     }
 }
@@ -518,6 +521,7 @@ mod tests {
             short_break_minutes: 1,
             long_break_minutes: 2,
             rounds_until_long_break: 4,
+            ..TimerSettings::default()
         })
         .unwrap()
     }
@@ -622,12 +626,23 @@ mod tests {
     }
 
     #[test]
+    fn existing_settings_default_to_normal_window_layer() {
+        let settings: TimerSettings = serde_json::from_str(
+            r#"{"focus_minutes":40,"short_break_minutes":5,"long_break_minutes":15,"rounds_until_long_break":4}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.focus_minutes, 40);
+        assert!(!settings.topmost);
+    }
+
+    #[test]
     fn settings_validation_matches_approved_limits() {
         let mut settings = TimerSettings {
             focus_minutes: 180,
             short_break_minutes: 60,
             long_break_minutes: 120,
             rounds_until_long_break: 12,
+            ..TimerSettings::default()
         };
         assert!(settings.validate().is_ok());
         settings.short_break_minutes = 61;
