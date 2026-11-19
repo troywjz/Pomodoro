@@ -321,7 +321,7 @@ export component SettingsWindow inherits Window {
     callback close-requested();
 
     width: 248px;
-    height: 310px;
+    height: 330px;
     background: dark ? #171b24 : #ffffff;
 
     Rectangle {
@@ -339,6 +339,13 @@ export component SettingsWindow inherits Window {
                 font-size: 18px;
                 font-weight: 700;
                 height: 26px;
+            }
+            Text {
+                text: "当前计时不变，新设置用于下一段";
+                color: dark ? #b4bdcc : #596579;
+                font-family: "Microsoft YaHei UI";
+                font-size: 11px;
+                height: 16px;
             }
             SettingRow { dark: root.dark; title: "专注"; value: root.focus-minutes; suffix: "分钟"; decrement => { root.focus-delta(-1); } increment => { root.focus-delta(1); } }
             SettingRow { dark: root.dark; title: "短休"; value: root.short-minutes; suffix: "分钟"; decrement => { root.short-delta(-1); } increment => { root.short-delta(1); } }

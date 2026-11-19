@@ -17,6 +17,7 @@ slint = { version = "=1.19.0", default-features = false, features = [
     "raw-window-handle-06",
 ] }
 raw-window-handle = "0.6"
+pomodoro-storage = { path = "crates/pomodoro-storage" }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -30,6 +31,9 @@ windows-sys = { version = "0.61", features = [
 
 [build-dependencies]
 slint-build = "=1.19.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [profile.release]
 lto = "thin"
