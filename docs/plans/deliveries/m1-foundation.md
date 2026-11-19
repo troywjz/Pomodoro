@@ -29,8 +29,8 @@
 ## 未完成与当前验证边界
 
 - 本检查点新增的 `ClockSample.boot_elapsed_ms` 尚未与 Windows 平台适配器合并；平台任务需提供清醒单调毫秒与含睡眠启动毫秒。当前工作树的最新增量尚未编译。
-- 存储最终文档提交 `1ed17f74c31e87dd3292eb82d62c9f945c47c32` 待并入；实现修订 `462ad46` 已在独立存储测试中通过。
-- Rust 侧已绑定设置 Save/Cancel 回调：保存接收四个值、成功后提交配置快照并关闭，保存失败保留窗口；取消回退到已保存配置。新 Slint 回调声明待 `task/m1-view-responsive` 合并，当前工作树暂时无法通过根 crate 编译。
+- 存储最终文档提交 `1ed17f74c31e87dd3292eb82d62c9f945c47c32` 已 merge；实现修订 `462ad46` 已在独立存储测试中通过。
+- Rust 侧已绑定设置 Save/Cancel 回调：保存接收四个值、成功后提交配置快照并关闭，保存失败保留窗口；取消回退到已保存配置。新 Slint 回调声明待 `task/m1-view-responsive` 合并，根 crate 编译安排在平台字段与视图回调合并后。
 - 小屏比例布局、键盘/读屏操作由 UI 短任务修订 `ui/main.slint`；当前窗口 PNG 和可访问性结果待复核。
 - 本检查点未执行完整 `cargo test`、存储集成 `cargo build`、Windows GUI 启动/退出 smoke、窗口截图、系统睡眠、Hyper-V 或多屏/DPI 实机验证。
 - 未推送远程分支、未创建 PR、未请求评审。
