@@ -342,7 +342,7 @@ export component SettingsWindow inherits Window {
     callback cancel-requested();
 
     width: 248px;
-    height: 310px;
+    height: 350px;
     background: dark ? #171b24 : #ffffff;
 
     Rectangle {
@@ -372,7 +372,6 @@ export component SettingsWindow inherits Window {
                 height: 38px;
                 clicked => {
                     root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds);
-                    root.close-requested();
                 }
             }
             ActionButton {
@@ -380,7 +379,7 @@ export component SettingsWindow inherits Window {
                 primary: false;
                 dark: root.dark;
                 height: 32px;
-                clicked => { root.cancel-requested(); root.close-requested(); }
+                clicked => { root.cancel-requested(); }
             }
         }
     }
