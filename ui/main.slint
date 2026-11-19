@@ -3,6 +3,7 @@ component ActionButton inherits Rectangle {
     in-out property <bool> primary;
     in-out property <bool> dark;
     in-out property <bool> enabled: true;
+    in-out property <float> font-scale: 1;
     callback clicked();
     out property <bool> has-focus: button-focus.has-focus;
     forward-focus: button-focus;
@@ -17,7 +18,7 @@ component ActionButton inherits Rectangle {
     border-color: primary ? (dark ? #91a7ff : #4263eb)
         : (dark ? #394152 : #cbd3df);
     border-width: 1px;
-    border-radius: 9px;
+    border-radius: 9 * root.font-scale * 1px;
 
     Text {
         text: label;
@@ -25,7 +26,7 @@ component ActionButton inherits Rectangle {
             : primary ? (dark ? #151a25 : #ffffff)
             : (dark ? #f3f5f8 : #182236);
         font-family: "Microsoft YaHei UI";
-        font-size: 14px;
+        font-size: 14 * root.font-scale * 1px;
         font-weight: 700;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -47,6 +48,16 @@ component ActionButton inherits Rectangle {
             return reject;
         }
     }
+    if root.has-focus: Rectangle {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        background: transparent;
+        border-color: root.dark ? #f3f5f8 : #182236;
+        border-width: 2px;
+        border-radius: root.border-radius;
+    }
 }
 
 component ProgressRing inherits Rectangle {
@@ -55,9 +66,10 @@ component ProgressRing inherits Rectangle {
     in-out property <bool> compact;
     in-out property <color> accent;
     in-out property <string> progress-path;
+    in-out property <float> layout-scale: 1;
 
-    width: compact ? 44px : 52px;
-    height: compact ? 44px : 52px;
+    width: (compact ? 44 : 52) * layout-scale * 1px;
+    height: (compact ? 44 : 52) * layout-scale * 1px;
     background: transparent;
 
     Path {
@@ -67,7 +79,7 @@ component ProgressRing inherits Rectangle {
             ? "M 22 2 A 20 20 0 1 1 21.99 2"
             : "M 26 2 A 24 24 0 1 1 25.99 2";
         stroke: dark ? #343b49 : #e5eaf2;
-        stroke-width: compact ? 4px : 5px;
+        stroke-width: (compact ? 4 : 5) * root.layout-scale * 1px;
         fill: transparent;
     }
 
@@ -76,7 +88,7 @@ component ProgressRing inherits Rectangle {
         height: parent.height;
         commands: root.progress-path;
         stroke: accent;
-        stroke-width: compact ? 4px : 5px;
+        stroke-width: (compact ? 4 : 5) * root.layout-scale * 1px;
         stroke-line-cap: round;
         fill: transparent;
     }
@@ -146,6 +158,7 @@ export component PomodoroWindow inherits Window {
                     progress: root.progress;
                     dark: root.dark;
                     compact: false;
+                    layout-scale: root.layout-scale;
                     accent: root.accent;
                     progress-path: root.progress-path;
                 }
@@ -171,18 +184,20 @@ export component PomodoroWindow inherits Window {
             }
 
             if recovering: HorizontalLayout {
-                spacing: 6px;
-                height: 38px;
+                spacing: 6 * root.layout-scale * 1px;
+                height: 38 * root.layout-scale * 1px;
                 ActionButton {
                     label: "继续";
                     primary: true;
                     dark: root.dark;
+                    font-scale: root.layout-scale;
                     clicked => { root.recovery-continue-requested(); }
                 }
                 ActionButton {
                     label: "保持暂停";
                     primary: false;
                     dark: root.dark;
+                    font-scale: root.layout-scale;
                     clicked => { root.recovery-pause-requested(); }
                 }
             }
@@ -191,6 +206,7 @@ export component PomodoroWindow inherits Window {
                 label: root.completed ? "下一段" : (root.running ? "暂停" : (root.paused ? "继续" : "开始"));
                 primary: true;
                 dark: root.dark;
+                font-scale: root.layout-scale;
                 clicked => {
                     if (root.completed) { root.next-requested(); }
                     else if (root.running) { root.pause-requested(); }
@@ -203,16 +219,18 @@ export component PomodoroWindow inherits Window {
                 label: "放弃本段";
                 primary: false;
                 dark: root.dark;
-                height: 24px;
+                font-scale: root.layout-scale;
+                height: 24 * root.layout-scale * 1px;
                 clicked => { root.recovery-discard-requested(); }
             }
             if !recovering: HorizontalLayout {
-                spacing: 7px;
-                height: 32px;
+                spacing: 7 * root.layout-scale * 1px;
+                height: 32 * root.layout-scale * 1px;
                 ActionButton {
                     label: "提前结束";
                     primary: false;
                     dark: root.dark;
+                    font-scale: root.layout-scale;
                     enabled: root.running || root.paused;
                     clicked => { root.end-requested(); }
                 }
@@ -220,6 +238,7 @@ export component PomodoroWindow inherits Window {
                     label: "设置";
                     primary: false;
                     dark: root.dark;
+                    font-scale: root.layout-scale;
                     clicked => { root.settings-requested(); }
                 }
             }
@@ -228,30 +247,31 @@ export component PomodoroWindow inherits Window {
                 text: root.feedback;
                 color: dark ? #ffb4bd : #b42335;
                 font-family: "Microsoft YaHei UI";
-                font-size: 11px;
+                font-size: 12 * root.layout-scale * 1px;
                 visible: root.feedback != "";
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                height: 15px;
+                height: 15 * root.layout-scale * 1px;
             }
 
             HorizontalLayout {
                 spacing: 0px;
-                ActionButton { label: "关于"; primary: false; dark: root.dark; height: 24px; clicked => { root.about-requested(); } }
+                ActionButton { label: "关于"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.about-requested(); } }
                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                ActionButton { label: "收起"; primary: false; dark: root.dark; height: 24px; clicked => { root.toggle-requested(); } }
+                ActionButton { label: "收起"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
             }
         }
 
         if !expanded: HorizontalLayout {
-            padding: 8px;
-            spacing: 8px;
+            padding: 8 * root.layout-scale * 1px;
+            spacing: 8 * root.layout-scale * 1px;
             alignment: center;
 
             ProgressRing {
                 progress: root.progress;
                 dark: root.dark;
                 compact: true;
+                layout-scale: root.layout-scale;
                 accent: root.accent;
                 progress-path: root.progress-path;
             }
@@ -259,12 +279,13 @@ export component PomodoroWindow inherits Window {
                 text: root.time-label;
                 color: dark ? #f3f5f8 : #182236;
                 font-family: "Microsoft YaHei UI";
-                font-size: 19px;
+                accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
+                font-size: 19 * root.layout-scale * 1px;
                 font-weight: 700;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
-            ActionButton { label: "展开"; primary: false; dark: root.dark; height: 36px; clicked => { root.toggle-requested(); } }
+            ActionButton { label: "展开"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 36 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
         }
     }
 }
