@@ -140,7 +140,7 @@ export component PomodoroWindow inherits Window {
             spacing: 7 * root.layout-scale * 1px;
 
             Text {
-                text: phase-title + "  ·  " + round-label;
+                text: phase-title + "  ·  " + (root.recovering ? "待恢复" : round-label);
                 color: dark ? #f3f5f8 : #182236;
                 font-family: "Microsoft YaHei UI";
                 font-size: 14 * root.layout-scale * 1px;
@@ -172,15 +172,6 @@ export component PomodoroWindow inherits Window {
                     font-weight: 700;
                     vertical-alignment: center;
                 }
-            }
-
-            Text {
-                text: root.recovering ? "选择恢复方式" : "";
-                color: dark ? #b4bdcc : #596579;
-                font-family: "Microsoft YaHei UI";
-                font-size: 12 * root.layout-scale * 1px;
-                height: 16 * root.layout-scale * 1px;
-                vertical-alignment: center;
             }
 
             if recovering: HorizontalLayout {
@@ -243,15 +234,15 @@ export component PomodoroWindow inherits Window {
                 }
             }
 
-            Text {
+            if root.feedback != "": Text {
                 text: root.feedback;
                 color: dark ? #ffb4bd : #b42335;
                 font-family: "Microsoft YaHei UI";
                 font-size: 12 * root.layout-scale * 1px;
-                visible: root.feedback != "";
+                wrap: word-wrap;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                height: 15 * root.layout-scale * 1px;
+                height: 42 * root.layout-scale * 1px;
             }
 
             HorizontalLayout {

@@ -305,11 +305,6 @@ impl Application {
         status
     }
 
-    pub fn export_analysis_json(&self, destination: &Path) -> Result<(), ApplicationError> {
-        self.store.export_json(destination)?;
-        Ok(())
-    }
-
     pub fn save_label(&self) -> &'static str {
         if self.pending.is_some() {
             "保存重试中"
@@ -324,8 +319,6 @@ impl Application {
         let mut messages = Vec::new();
         if let Some(message) = &self.last_runtime_message {
             messages.push(message.clone());
-        } else if self.timer.status() == TimerStatus::Recovery {
-            messages.push("上次退出时存在未完成计时，请选择恢复方式".to_owned());
         }
         if self.pending.is_some() {
             messages.push("本地保存正在重试".to_owned());
@@ -335,8 +328,8 @@ impl Application {
         if let Some(error) = &self.last_save_error {
             messages.push(error.clone());
         }
-        if let BackupStatus::Failed { message } = &self.last_backup_status {
-            messages.push(format!("备份失败，数据已保存，应用会自动重试：{message}"));
+        if let BackupStatus::Failed { .. } = &self.last_backup_status {
+            messages.push("备份失败，主数据已保存。稍后重试。".to_owned());
         }
         messages.join("；")
     }
@@ -513,8 +506,8 @@ fn recovery_event(timer: &TimerCore, reason: Option<RecoveryReason>) -> DomainEv
 
 fn recovery_message(reason: RecoveryReason) -> &'static str {
     match reason {
-        RecoveryReason::SystemSleep => "检测到系统睡眠，计时已暂停，请选择恢复方式",
-        RecoveryReason::MonotonicClockReset => "检测到计时源回退，计时已暂停，请选择恢复方式",
+        RecoveryReason::SystemSleep => "系统睡眠后，计时已暂停。",
+        RecoveryReason::MonotonicClockReset => "时钟异常，计时已暂停。",
     }
 }
 
@@ -779,7 +772,7 @@ mod tests {
         assert_eq!(backups, 1);
 
         let export = directory.path().join("analysis.json");
-        app.export_analysis_json(&export).unwrap();
+        app.store.export_json(&export).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&fs::read(export).unwrap()).unwrap();
         assert_eq!(value["sessions"].as_array().unwrap().len(), 1);
         assert!(value["events"].as_array().unwrap().len() >= 3);
@@ -814,7 +807,7 @@ mod tests {
         )
         .unwrap();
         let export = directory.path().join("analysis.json");
-        app.export_analysis_json(&export).unwrap();
+        app.store.export_json(&export).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&fs::read(export).unwrap()).unwrap();
         assert_eq!(value["settings_history"].as_array().unwrap().len(), 3);
         assert_eq!(value["settings"]["focus_minutes"], 35);

@@ -316,8 +316,9 @@ impl TimerCore {
         }
         session.last_sample_monotonic_ms = sample.monotonic_ms;
         session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
-        session.actual_active_ms = session.actual_active_ms.saturating_add(elapsed_ms);
-        session.remaining_ms = session.remaining_ms.saturating_sub(elapsed_ms);
+        let counted_ms = elapsed_ms.min(session.remaining_ms);
+        session.actual_active_ms = session.actual_active_ms.saturating_add(counted_ms);
+        session.remaining_ms -= counted_ms;
         self.runtime_seq = self.runtime_seq.saturating_add(1);
 
         if session.remaining_ms == 0 {
@@ -541,8 +542,8 @@ mod tests {
     fn completion_is_emitted_once_even_when_ticks_repeat() {
         let mut timer = short_timer();
         timer.start("session-1".into(), sample(0, 1_000)).unwrap();
-        let first = timer.tick(sample(60_000, 61_000));
-        assert!(first.completed.is_some());
+        let first = timer.tick(sample(65_000, 66_000));
+        assert_eq!(first.completed.unwrap().actual_active_ms, 60_000);
         assert!(timer.tick(sample(90_000, 91_000)).completed.is_none());
         assert_eq!(timer.status(), TimerStatus::Completed);
     }

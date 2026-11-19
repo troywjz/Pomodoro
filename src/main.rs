@@ -18,8 +18,30 @@ slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let origin = Instant::now();
+    let data_dir = data_directory()?;
+    let mut args = std::env::args_os().skip(1);
+    if let Some(command) = args.next() {
+        let destination = match (command.to_str(), args.next(), args.next()) {
+            (Some("--export-json"), Some(path), None) => PathBuf::from(path),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Usage: pomodoro [--export-json <path>]",
+                )
+                .into());
+            }
+        };
+        if !data_dir.join("pomodoro.sqlite3").is_file() {
+            return Err(
+                io::Error::new(io::ErrorKind::NotFound, "Pomodoro database not found").into(),
+            );
+        }
+        let store = pomodoro_storage::Store::open(&data_dir)?;
+        store.export_json(&destination)?;
+        return Ok(());
+    }
     let application = Rc::new(RefCell::new(Application::open(
-        &data_directory()?,
+        &data_dir,
         clock_sample(origin),
     )?));
     let feedback = Rc::new(RefCell::new(String::new()));
