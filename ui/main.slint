@@ -96,6 +96,7 @@ component ProgressRing inherits Rectangle {
 
 export component PomodoroWindow inherits Window {
     in-out property <length> target-width: 192px;
+    out property <length> target-height: (expanded ? (recovering ? (feedback != "" ? 266 : 228) : (feedback != "" ? 262 : 224)) : 72) * root.layout-scale * 1px;
     in-out property <string> progress-path: "M 26 2 A 24 24 0 1 1 26 50 A 24 24 0 1 1 26 2";
     in-out property <bool> dark;
     in-out property <bool> expanded: true;
@@ -124,36 +125,44 @@ export component PomodoroWindow inherits Window {
     callback toggle-requested();
     callback settings-requested();
     callback about-requested();
+    callback exit-requested();
 
+    no-frame: true;
     width: target-width;
-    height: (expanded ? 300 : 88) * root.layout-scale * 1px;
-    background: dark ? #171b24 : #ffffff;
+    height: target-height;
+    background: transparent;
 
     Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
         background: dark ? #171b24 : #ffffff;
         border-color: dark ? #394152 : #cbd3df;
         border-width: 1px;
         border-radius: 16 * root.layout-scale * 1px;
 
         if expanded: VerticalLayout {
-            padding: 11 * root.layout-scale * 1px;
-            spacing: 7 * root.layout-scale * 1px;
+            padding: 9 * root.layout-scale * 1px;
+            spacing: 6 * root.layout-scale * 1px;
 
-            Text {
-                text: phase-title + "  ·  " + (root.recovering ? "待恢复" : round-label);
-                color: dark ? #f3f5f8 : #182236;
-                font-family: "Microsoft YaHei UI";
-                font-size: 14 * root.layout-scale * 1px;
-                font-weight: 700;
-                vertical-alignment: center;
+            WindowMoveArea {
                 height: 21 * root.layout-scale * 1px;
+                Text {
+                    text: phase-title + "  ·  " + (root.recovering ? "待恢复" : round-label);
+                    color: dark ? #f3f5f8 : #182236;
+                    font-family: "Microsoft YaHei UI";
+                    font-size: 14 * root.layout-scale * 1px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
 
             HorizontalLayout {
                 spacing: 10 * root.layout-scale * 1px;
                 alignment: center;
-                height: 56 * root.layout-scale * 1px;
-
+                height: 52 * root.layout-scale * 1px;
                 ProgressRing {
                     progress: root.progress;
                     dark: root.dark;
@@ -162,7 +171,6 @@ export component PomodoroWindow inherits Window {
                     accent: root.accent;
                     progress-path: root.progress-path;
                 }
-
                 Text {
                     text: root.time-label;
                     accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
@@ -175,25 +183,13 @@ export component PomodoroWindow inherits Window {
             }
 
             if recovering: HorizontalLayout {
-                spacing: 6 * root.layout-scale * 1px;
-                height: 38 * root.layout-scale * 1px;
-                ActionButton {
-                    label: "继续";
-                    primary: true;
-                    dark: root.dark;
-                    font-scale: root.layout-scale;
-                    clicked => { root.recovery-continue-requested(); }
-                }
-                ActionButton {
-                    label: "保持暂停";
-                    primary: false;
-                    dark: root.dark;
-                    font-scale: root.layout-scale;
-                    clicked => { root.recovery-pause-requested(); }
-                }
+                spacing: 7 * root.layout-scale * 1px;
+                height: 36 * root.layout-scale * 1px;
+                ActionButton { label: "继续"; primary: true; dark: root.dark; font-scale: root.layout-scale; clicked => { root.recovery-continue-requested(); } }
+                ActionButton { label: "保持暂停"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.recovery-pause-requested(); } }
             }
             if !recovering: ActionButton {
-                height: 40 * root.layout-scale * 1px;
+                height: 38 * root.layout-scale * 1px;
                 label: root.completed ? "下一段" : (root.running ? "暂停" : (root.paused ? "继续" : "开始"));
                 primary: true;
                 dark: root.dark;
@@ -205,35 +201,17 @@ export component PomodoroWindow inherits Window {
                     else { root.start-requested(); }
                 }
             }
-
             if recovering: ActionButton {
-                label: "放弃本段";
-                primary: false;
-                dark: root.dark;
-                font-scale: root.layout-scale;
-                height: 24 * root.layout-scale * 1px;
+                label: "放弃本段"; primary: false; dark: root.dark; font-scale: root.layout-scale;
+                height: 34 * root.layout-scale * 1px;
                 clicked => { root.recovery-discard-requested(); }
             }
             if !recovering: HorizontalLayout {
                 spacing: 7 * root.layout-scale * 1px;
-                height: 32 * root.layout-scale * 1px;
-                ActionButton {
-                    label: "提前结束";
-                    primary: false;
-                    dark: root.dark;
-                    font-scale: root.layout-scale;
-                    enabled: root.running || root.paused;
-                    clicked => { root.end-requested(); }
-                }
-                ActionButton {
-                    label: "设置";
-                    primary: false;
-                    dark: root.dark;
-                    font-scale: root.layout-scale;
-                    clicked => { root.settings-requested(); }
-                }
+                height: 34 * root.layout-scale * 1px;
+                ActionButton { label: "提前结束"; primary: false; dark: root.dark; font-scale: root.layout-scale; enabled: root.running || root.paused; clicked => { root.end-requested(); } }
+                ActionButton { label: "设置"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.settings-requested(); } }
             }
-
             if root.feedback != "": Text {
                 text: root.feedback;
                 color: dark ? #ffb4bd : #b42335;
@@ -242,41 +220,58 @@ export component PomodoroWindow inherits Window {
                 wrap: word-wrap;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                height: 42 * root.layout-scale * 1px;
+                height: 32 * root.layout-scale * 1px;
             }
-
             HorizontalLayout {
-                spacing: 0px;
-                ActionButton { label: "关于"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.about-requested(); } }
-                Rectangle { horizontal-stretch: 1; background: transparent; }
-                ActionButton { label: "收起"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
+                spacing: 5 * root.layout-scale * 1px;
+                height: 34 * root.layout-scale * 1px;
+                ActionButton { label: "关于"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.about-requested(); } }
+                ActionButton { label: "收起"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.toggle-requested(); } }
+                ActionButton { label: "退出"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.exit-requested(); } }
             }
         }
 
-        if !expanded: HorizontalLayout {
-            padding: 8 * root.layout-scale * 1px;
-            spacing: 8 * root.layout-scale * 1px;
-            alignment: center;
+        if !expanded: WindowMoveArea {
+            Rectangle {
+                width: expand-button.x + expand-button.width;
+                height: parent.height;
+                x: (parent.width - self.width) / 2;
 
-            ProgressRing {
-                progress: root.progress;
-                dark: root.dark;
-                compact: true;
-                layout-scale: root.layout-scale;
-                accent: root.accent;
-                progress-path: root.progress-path;
+                compact-ring := ProgressRing {
+                    x: 0px;
+                    y: (parent.height - self.height) / 2;
+                    progress: root.progress;
+                    dark: root.dark;
+                    compact: true;
+                    layout-scale: root.layout-scale;
+                    accent: root.accent;
+                    progress-path: root.progress-path;
+                }
+                compact-time := Text {
+                    x: compact-ring.width + 7 * root.layout-scale * 1px;
+                    y: (parent.height - self.height) / 2;
+                    width: 66 * root.layout-scale * 1px;
+                    height: expand-button.height;
+                    text: root.time-label;
+                    color: dark ? #f3f5f8 : #182236;
+                    font-family: "Microsoft YaHei UI";
+                    accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
+                    font-size: 19 * root.layout-scale * 1px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                expand-button := ActionButton {
+                    x: compact-time.x + compact-time.width + 7 * root.layout-scale * 1px;
+                    y: (parent.height - self.height) / 2;
+                    width: 44 * root.layout-scale * 1px;
+                    height: 38 * root.layout-scale * 1px;
+                    label: "展开";
+                    dark: root.dark;
+                    font-scale: root.layout-scale;
+                    clicked => { root.toggle-requested(); }
+                }
             }
-            Text {
-                text: root.time-label;
-                color: dark ? #f3f5f8 : #182236;
-                font-family: "Microsoft YaHei UI";
-                accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
-                font-size: 19 * root.layout-scale * 1px;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-            Rectangle { horizontal-stretch: 1; background: transparent; }
-            ActionButton { label: "展开"; primary: false; dark: root.dark; font-scale: root.layout-scale; height: 36 * root.layout-scale * 1px; clicked => { root.toggle-requested(); } }
         }
     }
 }
@@ -332,9 +327,10 @@ export component SettingsWindow inherits Window {
     callback save-requested(int, int, int, int);
     callback cancel-requested();
 
+    no-frame: true;
     width: 248px;
     height: 350px;
-    background: dark ? #171b24 : #ffffff;
+    background: transparent;
 
     Rectangle {
         background: dark ? #171b24 : #ffffff;
@@ -379,9 +375,10 @@ export component SettingsWindow inherits Window {
 export component AboutWindow inherits Window {
     in-out property <bool> dark;
     callback close-requested();
+    no-frame: true;
     width: 248px;
     height: 170px;
-    background: dark ? #171b24 : #ffffff;
+    background: transparent;
     Rectangle {
         background: dark ? #171b24 : #ffffff;
         border-color: dark ? #394152 : #cbd3df;
