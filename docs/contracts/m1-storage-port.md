@@ -21,9 +21,11 @@
 
 `CommitOutcome`包含`receipt: Receipt`及`backup_status: BackupStatus`；`Receipt`字段为`command_id: String`、`global_revision: u64`、`session_revision: u64`、`settings_revision: u64`、`committed_utc_ms: i64`、`duplicate: bool`。`BackupStatus`至少区分`NotDue`、`Created`、`Failed`，并支持界面呈现可重试错误。
 
-接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。提交终结`session_record`会在同一事务清除活动checkpoint；同一请求同时提供checkpoint和终结记录属于无效请求。
+接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。终结`session_record`与调用方提供的最终`checkpoint_json`在同一事务提交；终结记录未提供新checkpoint时，事务清除原活动checkpoint。
 
 配置保留：每次成功写入`settings_json`均持久保留对应`settings_revision`、完整配置JSON和UTC更新时间；`export_json`输出全部配置版本及当前配置，不按时间或数量清理。
+
+路径与发布保护：`export_json`写入前拒绝主库、主库WAL/SHM/journal sidecar以及应用管理的`backups`子树，比较路径时先做规范化并解析现存路径前缀。自动备份发布采用原子不覆盖文件名冲突的创建方式；冲突时使用新文件名，保留原有效备份。
 
 备份失败发生在成功业务提交之后时，业务提交仍返回成功回执，backup_status显式报告失败。备份使用SQLite一致性备份API、完整性校验和成功标记；主库和历史保留。清历史保留活动/配置/回执与应用备份；永久清除的完整流程留在对应数据管理任务，M1基线不提供简化删除入口。
 
