@@ -269,11 +269,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     {
+        let application = application.clone();
         let about_weak = about_weak.clone();
         let dark = dark.clone();
         main_window.on_about_requested(move || {
             if let Some(window) = about_weak.upgrade() {
                 window.set_dark(dark.get());
+                window.set_keep_on_top(application.borrow().timer.settings.topmost);
                 window.show().ok();
             }
         });
@@ -416,26 +418,29 @@ fn connect_settings(
         let application = application.clone();
         let feedback = feedback.clone();
         let main_weak = main_weak.clone();
-        settings_window.on_save_requested(move |focus, short_break, long_break, rounds| {
-            let settings = TimerSettings {
-                focus_minutes: u32::try_from(focus).unwrap_or(0),
-                short_break_minutes: u32::try_from(short_break).unwrap_or(0),
-                long_break_minutes: u32::try_from(long_break).unwrap_or(0),
-                rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
-            };
-            let result = application
-                .borrow_mut()
-                .update_settings(settings, clock_sample(origin));
-            let saved = result.is_ok();
-            set_result_feedback(&feedback, result, "设置");
-            if saved {
-                if let Some(window) = settings_weak.upgrade() {
-                    sync_settings_window(&window, &application.borrow());
-                    window.hide().ok();
+        settings_window.on_save_requested(
+            move |focus, short_break, long_break, rounds, topmost| {
+                let settings = TimerSettings {
+                    focus_minutes: u32::try_from(focus).unwrap_or(0),
+                    short_break_minutes: u32::try_from(short_break).unwrap_or(0),
+                    long_break_minutes: u32::try_from(long_break).unwrap_or(0),
+                    rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
+                    topmost,
+                };
+                let result = application
+                    .borrow_mut()
+                    .update_settings(settings, clock_sample(origin));
+                let saved = result.is_ok();
+                set_result_feedback(&feedback, result, "设置");
+                if saved {
+                    if let Some(window) = settings_weak.upgrade() {
+                        sync_settings_window(&window, &application.borrow());
+                        window.hide().ok();
+                    }
                 }
-            }
-            refresh_main(&main_weak, &application, &feedback);
-        });
+                refresh_main(&main_weak, &application, &feedback);
+            },
+        );
     }
 
     {
@@ -473,10 +478,15 @@ fn sync_settings_window(window: &SettingsWindow, application: &Application) {
     window.set_draft_short(settings.short_break_minutes as i32);
     window.set_draft_long(settings.long_break_minutes as i32);
     window.set_draft_rounds(settings.rounds_until_long_break as i32);
+    window.set_draft_topmost(settings.topmost);
+    window.set_keep_on_top(settings.topmost);
 }
 
 fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback: &str) {
     let timer = &application.timer;
+    if window.get_keep_on_top() != timer.settings.topmost {
+        window.set_keep_on_top(timer.settings.topmost);
+    }
     let (remaining_ms, target_ms, round) = timer
         .session
         .as_ref()

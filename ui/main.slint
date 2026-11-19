@@ -1,3 +1,5 @@
+import { Switch } from "std-widgets.slint";
+
 component ActionButton inherits Rectangle {
     in-out property <string> label;
     in-out property <bool> primary;
@@ -95,6 +97,8 @@ component ProgressRing inherits Rectangle {
 }
 
 export component PomodoroWindow inherits Window {
+    in property <bool> keep-on-top;
+    always-on-top: root.keep-on-top;
     in-out property <length> target-width: 192px;
     out property <length> target-height: (expanded ? (recovering ? (feedback != "" ? 266 : 228) : (feedback != "" ? 262 : 224)) : 72) * root.layout-scale * 1px;
     in-out property <string> progress-path: "M 26 2 A 24 24 0 1 1 26 50 A 24 24 0 1 1 26 2";
@@ -311,6 +315,8 @@ component SettingRow inherits Rectangle {
 
 export component SettingsWindow inherits Window {
     in-out property <bool> dark;
+    in property <bool> keep-on-top;
+    always-on-top: root.keep-on-top;
     in-out property <int> focus-minutes: 25;
     in-out property <int> short-minutes: 5;
     in-out property <int> long-minutes: 15;
@@ -319,17 +325,18 @@ export component SettingsWindow inherits Window {
     in-out property <int> draft-short: root.short-minutes;
     in-out property <int> draft-long: root.long-minutes;
     in-out property <int> draft-rounds: root.rounds;
+    in-out property <bool> draft-topmost;
     callback focus-delta(int);
     callback short-delta(int);
     callback long-delta(int);
     callback rounds-delta(int);
     callback close-requested();
-    callback save-requested(int, int, int, int);
+    callback save-requested(int, int, int, int, bool);
     callback cancel-requested();
 
     no-frame: true;
     width: 248px;
-    height: 350px;
+    height: 390px;
     background: transparent;
 
     Rectangle {
@@ -352,13 +359,18 @@ export component SettingsWindow inherits Window {
             SettingRow { dark: root.dark; title: "短休"; value: root.draft-short; suffix: "分钟"; decrement => { root.draft-short = max(1, root.draft-short - 1); } increment => { root.draft-short = min(60, root.draft-short + 1); } }
             SettingRow { dark: root.dark; title: "长休"; value: root.draft-long; suffix: "分钟"; decrement => { root.draft-long = max(1, root.draft-long - 1); } increment => { root.draft-long = min(120, root.draft-long + 1); } }
             SettingRow { dark: root.dark; title: "长休间隔"; value: root.draft-rounds; suffix: "轮"; decrement => { root.draft-rounds = max(1, root.draft-rounds - 1); } increment => { root.draft-rounds = min(12, root.draft-rounds + 1); } }
+            Switch {
+                text: "窗口置顶";
+                checked <=> root.draft-topmost;
+                height: 30px;
+            }
             ActionButton {
                 label: "保存";
                 primary: true;
                 dark: root.dark;
                 height: 38px;
                 clicked => {
-                    root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds);
+                    root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds, root.draft-topmost);
                 }
             }
             ActionButton {
@@ -374,6 +386,8 @@ export component SettingsWindow inherits Window {
 
 export component AboutWindow inherits Window {
     in-out property <bool> dark;
+    in property <bool> keep-on-top;
+    always-on-top: root.keep-on-top;
     callback close-requested();
     no-frame: true;
     width: 248px;

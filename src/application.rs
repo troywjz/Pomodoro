@@ -860,6 +860,7 @@ mod tests {
         app.update_settings(
             TimerSettings {
                 focus_minutes: 35,
+                topmost: true,
                 ..TimerSettings::default()
             },
             sample(2, 1_002),
@@ -870,6 +871,10 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&fs::read(export).unwrap()).unwrap();
         assert_eq!(value["settings_history"].as_array().unwrap().len(), 3);
         assert_eq!(value["settings"]["focus_minutes"], 35);
+        assert_eq!(value["settings"]["topmost"], true);
+        drop(app);
+        let reopened = Application::open(directory.path(), sample(3, 1_003)).unwrap();
+        assert!(reopened.timer.settings.topmost);
     }
 
     #[test]
