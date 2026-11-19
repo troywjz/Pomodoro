@@ -59,8 +59,8 @@ impl TimerSettings {
 
     pub fn validate(&self) -> Result<(), TimerError> {
         if !(1..=180).contains(&self.focus_minutes)
-            || !(1..=120).contains(&self.short_break_minutes)
-            || !(1..=180).contains(&self.long_break_minutes)
+            || !(1..=60).contains(&self.short_break_minutes)
+            || !(1..=120).contains(&self.long_break_minutes)
             || !(1..=12).contains(&self.rounds_until_long_break)
         {
             return Err(TimerError::InvalidSettings);
@@ -91,6 +91,7 @@ pub enum TimerStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClockSample {
     pub monotonic_ms: u64,
+    pub boot_elapsed_ms: u64,
     pub utc_ms: i64,
     pub local_date: String,
     pub local_offset_minutes: i32,
@@ -111,6 +112,8 @@ pub struct TimerSession {
     #[serde(skip)]
     last_sample_monotonic_ms: u64,
     #[serde(skip)]
+    last_boot_elapsed_ms: u64,
+    #[serde(skip)]
     status_before_recovery: Option<SessionStatus>,
 }
 
@@ -123,7 +126,7 @@ pub struct TimerCore {
     pub session: Option<TimerSession>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SessionRecord {
     pub session_id: String,
     pub phase: String,
@@ -137,7 +140,7 @@ pub struct SessionRecord {
     pub reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DomainEvent {
     Started {
         session_id: String,
@@ -163,6 +166,18 @@ pub enum DomainEvent {
     RecoveryKeptPaused {
         session_id: String,
     },
+    RecoveryRequired {
+        session_id: String,
+        reason: RecoveryReason,
+    },
+    SettingsChanged(TimerSettings),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryReason {
+    SystemSleep,
+    MonotonicClockReset,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -195,6 +210,8 @@ impl std::error::Error for TimerError {}
 pub struct TickResult {
     pub elapsed_ms: u64,
     pub completed: Option<SessionRecord>,
+    pub recovery_required: bool,
+    pub recovery_reason: Option<RecoveryReason>,
 }
 
 impl TimerCore {
@@ -240,6 +257,7 @@ impl TimerCore {
             start_local_date: sample.local_date,
             start_offset_minutes: sample.local_offset_minutes,
             last_sample_monotonic_ms: sample.monotonic_ms,
+            last_boot_elapsed_ms: sample.boot_elapsed_ms,
             status_before_recovery: None,
         });
         Ok(DomainEvent::Started {
@@ -257,13 +275,47 @@ impl TimerCore {
             return TickResult::default();
         }
 
-        let elapsed_ms = sample
-            .monotonic_ms
-            .saturating_sub(session.last_sample_monotonic_ms);
+        if sample.monotonic_ms < session.last_sample_monotonic_ms {
+            session.status_before_recovery = Some(SessionStatus::Running);
+            session.status = SessionStatus::Recovery;
+            session.last_sample_monotonic_ms = sample.monotonic_ms;
+            session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
+            return TickResult {
+                recovery_required: true,
+                recovery_reason: Some(RecoveryReason::MonotonicClockReset),
+                ..TickResult::default()
+            };
+        }
+
+        let elapsed_ms = sample.monotonic_ms - session.last_sample_monotonic_ms;
+        if sample.boot_elapsed_ms < session.last_boot_elapsed_ms {
+            session.status_before_recovery = Some(SessionStatus::Running);
+            session.status = SessionStatus::Recovery;
+            session.last_sample_monotonic_ms = sample.monotonic_ms;
+            session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
+            return TickResult {
+                recovery_required: true,
+                recovery_reason: Some(RecoveryReason::MonotonicClockReset),
+                ..TickResult::default()
+            };
+        }
+        let boot_elapsed_ms = sample.boot_elapsed_ms - session.last_boot_elapsed_ms;
+        if boot_elapsed_ms > elapsed_ms.saturating_add(500) {
+            session.status_before_recovery = Some(SessionStatus::Running);
+            session.status = SessionStatus::Recovery;
+            session.last_sample_monotonic_ms = sample.monotonic_ms;
+            session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
+            return TickResult {
+                recovery_required: true,
+                recovery_reason: Some(RecoveryReason::SystemSleep),
+                ..TickResult::default()
+            };
+        }
         if elapsed_ms == 0 {
             return TickResult::default();
         }
         session.last_sample_monotonic_ms = sample.monotonic_ms;
+        session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
         session.actual_active_ms = session.actual_active_ms.saturating_add(elapsed_ms);
         session.remaining_ms = session.remaining_ms.saturating_sub(elapsed_ms);
         self.runtime_seq = self.runtime_seq.saturating_add(1);
@@ -274,11 +326,13 @@ impl TimerCore {
             TickResult {
                 elapsed_ms,
                 completed: Some(record),
+                ..TickResult::default()
             }
         } else {
             TickResult {
                 elapsed_ms,
                 completed: None,
+                ..TickResult::default()
             }
         }
     }
@@ -350,12 +404,13 @@ impl TimerCore {
         })
     }
 
-    pub fn restore_for_recovery(&mut self, monotonic_now_ms: u64) {
+    pub fn restore_for_recovery(&mut self, sample: ClockSample) {
         if let Some(session) = self.session.as_mut() {
             if session.status == SessionStatus::Running || session.status == SessionStatus::Paused {
                 session.status_before_recovery = Some(session.status);
                 session.status = SessionStatus::Recovery;
-                session.last_sample_monotonic_ms = monotonic_now_ms;
+                session.last_sample_monotonic_ms = sample.monotonic_ms;
+                session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
             }
         }
     }
@@ -374,12 +429,14 @@ impl TimerCore {
             RecoveryChoice::Continue => {
                 session.status = SessionStatus::Running;
                 session.last_sample_monotonic_ms = sample.monotonic_ms;
+                session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
                 session.status_before_recovery = None;
                 Ok(Some(DomainEvent::RecoveryContinued { session_id: id }))
             }
             RecoveryChoice::KeepPaused => {
                 session.status = SessionStatus::Paused;
                 session.last_sample_monotonic_ms = sample.monotonic_ms;
+                session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
                 session.status_before_recovery = None;
                 Ok(Some(DomainEvent::RecoveryKeptPaused { session_id: id }))
             }
@@ -446,6 +503,7 @@ mod tests {
     fn sample(monotonic_ms: u64, utc_ms: i64) -> ClockSample {
         ClockSample {
             monotonic_ms,
+            boot_elapsed_ms: monotonic_ms,
             utc_ms,
             local_date: "2026-11-19".to_owned(),
             local_offset_minutes: -360,
@@ -489,11 +547,46 @@ mod tests {
     }
 
     #[test]
+    fn sleep_gap_requires_recovery_and_does_not_consume_remaining_time() {
+        let mut timer = short_timer();
+        timer
+            .start("session-1".into(), sample(1_000, 1_000))
+            .unwrap();
+        timer.tick(sample(2_000, 2_000));
+        let before_sleep = timer.session.as_ref().unwrap().remaining_ms;
+        let wake = timer.tick(ClockSample {
+            monotonic_ms: 3_000,
+            boot_elapsed_ms: 62_000,
+            utc_ms: 62_000,
+            ..sample(3_000, 62_000)
+        });
+        assert!(wake.recovery_required);
+        assert_eq!(wake.recovery_reason, Some(RecoveryReason::SystemSleep));
+        assert_eq!(timer.status(), TimerStatus::Recovery);
+        assert_eq!(timer.session.as_ref().unwrap().remaining_ms, before_sleep);
+    }
+
+    #[test]
+    fn monotonic_clock_regression_requires_recovery() {
+        let mut timer = short_timer();
+        timer
+            .start("session-1".into(), sample(5_000, 5_000))
+            .unwrap();
+        let result = timer.tick(sample(4_000, 6_000));
+        assert!(result.recovery_required);
+        assert_eq!(
+            result.recovery_reason,
+            Some(RecoveryReason::MonotonicClockReset)
+        );
+        assert_eq!(timer.status(), TimerStatus::Recovery);
+    }
+
+    #[test]
     fn recovery_requires_a_decision_and_does_not_charge_offline_time() {
         let mut timer = short_timer();
         timer.start("session-1".into(), sample(0, 1_000)).unwrap();
         timer.tick(sample(15_000, 16_000));
-        timer.restore_for_recovery(0);
+        timer.restore_for_recovery(sample(0, 1_000));
         assert_eq!(timer.status(), TimerStatus::Recovery);
         assert_eq!(timer.session.as_ref().unwrap().remaining_ms, 45_000);
 
@@ -524,5 +617,21 @@ mod tests {
             }
         }
         assert_eq!(timer.phase, Phase::LongBreak);
+    }
+
+    #[test]
+    fn settings_validation_matches_approved_limits() {
+        let mut settings = TimerSettings {
+            focus_minutes: 180,
+            short_break_minutes: 60,
+            long_break_minutes: 120,
+            rounds_until_long_break: 12,
+        };
+        assert!(settings.validate().is_ok());
+        settings.short_break_minutes = 61;
+        assert_eq!(settings.validate(), Err(TimerError::InvalidSettings));
+        settings.short_break_minutes = 60;
+        settings.long_break_minutes = 121;
+        assert_eq!(settings.validate(), Err(TimerError::InvalidSettings));
     }
 }

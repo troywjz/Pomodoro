@@ -3,10 +3,12 @@ mod domain;
 mod platform;
 
 use std::cell::{Cell, RefCell};
+use std::io;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use application::Application;
+use application::{Application, ApplicationError};
 use domain::{DomainEvent, RecoveryChoice, TimerSettings, TimerStatus};
 use platform::{clock_sample, logical_width, monitor_metrics, physical_window_width};
 use slint::{ComponentHandle, Timer, TimerMode};
@@ -16,7 +18,10 @@ slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let origin = Instant::now();
-    let application = Rc::new(RefCell::new(Application::new(TimerSettings::default())?));
+    let application = Rc::new(RefCell::new(Application::open(
+        &data_directory()?,
+        clock_sample(origin),
+    )?));
     let feedback = Rc::new(RefCell::new(String::new()));
     let dark = Rc::new(Cell::new(platform::system_prefers_dark_theme()));
     let expanded = Rc::new(Cell::new(true));
@@ -92,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let feedback = feedback.clone();
         let main_weak = main_weak.clone();
         main_window.on_next_requested(move || {
-            let result = application.borrow_mut().advance();
+            let result = application.borrow_mut().advance(clock_sample(origin));
             set_result_feedback(&feedback, result.map(|_| ()), "下一段");
             refresh_main(&main_weak, &application, &feedback);
         });
@@ -147,18 +152,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let application = application.clone();
-        let feedback = feedback.clone();
         let settings_weak = settings_weak.clone();
-        let main_weak = main_weak.clone();
         main_window.on_settings_requested(move || {
             if let Some(window) = settings_weak.upgrade() {
-                if application.borrow().timer.session.is_none() {
-                    sync_settings_window(&window, &application.borrow());
-                    window.show().ok();
-                } else {
-                    *feedback.borrow_mut() = "计时结束后可修改设置".to_owned();
-                    refresh_main(&main_weak, &application, &feedback);
-                }
+                sync_settings_window(&window, &application.borrow());
+                window.show().ok();
             }
         });
     }
@@ -173,7 +171,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    connect_settings(&settings_window, &application, &feedback, &main_weak);
+    connect_settings(
+        &settings_window,
+        &application,
+        &feedback,
+        &main_weak,
+        origin,
+    );
     {
         let settings_weak = settings_window.as_weak();
         settings_window.on_close_requested(move || {
@@ -201,6 +205,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if tick.completed.is_some() {
                 feedback.borrow_mut().clear();
             }
+            refresh_main(&main_weak, &application, &feedback);
+        });
+    }
+
+    let backup_timer = Timer::default();
+    {
+        let application = application.clone();
+        let feedback = feedback.clone();
+        let main_weak = main_weak.clone();
+        backup_timer.start(TimerMode::Repeated, Duration::from_secs(30), move || {
+            let now = clock_sample(origin);
+            application.borrow_mut().maybe_auto_backup(now.utc_ms);
             refresh_main(&main_weak, &application, &feedback);
         });
     }
@@ -250,6 +266,7 @@ fn connect_settings(
     application: &Rc<RefCell<Application>>,
     feedback: &Rc<RefCell<String>>,
     main_weak: &slint::Weak<PomodoroWindow>,
+    origin: Instant,
 ) {
     {
         let settings_weak = settings_window.as_weak();
@@ -259,7 +276,7 @@ fn connect_settings(
         settings_window.on_focus_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
                 window.set_focus_minutes((window.get_focus_minutes() + delta).clamp(1, 180));
-                apply_settings(&window, &application, &feedback, &main_weak);
+                apply_settings(&window, &application, &feedback, &main_weak, origin);
             }
         });
     }
@@ -271,7 +288,7 @@ fn connect_settings(
         settings_window.on_short_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
                 window.set_short_minutes((window.get_short_minutes() + delta).clamp(1, 120));
-                apply_settings(&window, &application, &feedback, &main_weak);
+                apply_settings(&window, &application, &feedback, &main_weak, origin);
             }
         });
     }
@@ -283,7 +300,7 @@ fn connect_settings(
         settings_window.on_long_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
                 window.set_long_minutes((window.get_long_minutes() + delta).clamp(1, 180));
-                apply_settings(&window, &application, &feedback, &main_weak);
+                apply_settings(&window, &application, &feedback, &main_weak, origin);
             }
         });
     }
@@ -295,7 +312,7 @@ fn connect_settings(
         settings_window.on_rounds_delta(move |delta| {
             if let Some(window) = settings_weak.upgrade() {
                 window.set_rounds((window.get_rounds() + delta).clamp(1, 12));
-                apply_settings(&window, &application, &feedback, &main_weak);
+                apply_settings(&window, &application, &feedback, &main_weak, origin);
             }
         });
     }
@@ -306,6 +323,7 @@ fn apply_settings(
     application: &Rc<RefCell<Application>>,
     feedback: &Rc<RefCell<String>>,
     main_weak: &slint::Weak<PomodoroWindow>,
+    origin: Instant,
 ) {
     let settings = TimerSettings {
         focus_minutes: settings_window.get_focus_minutes().max(1) as u32,
@@ -313,8 +331,13 @@ fn apply_settings(
         long_break_minutes: settings_window.get_long_minutes().max(1) as u32,
         rounds_until_long_break: settings_window.get_rounds().max(1) as u8,
     };
-    let result = application.borrow_mut().update_settings(settings);
+    let result = application
+        .borrow_mut()
+        .update_settings(settings, clock_sample(origin));
     set_result_feedback(feedback, result, "设置");
+    if let Some(window) = settings_window.as_weak().upgrade() {
+        sync_settings_window(&window, &application.borrow());
+    }
     refresh_main(main_weak, application, feedback);
 }
 
@@ -363,8 +386,15 @@ fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback
         TimerStatus::Recovery => "等待恢复处理",
     };
     window.set_status_label(status.into());
-    window.set_save_label("待接入保存".into());
-    window.set_feedback(feedback.into());
+    window.set_save_label(application.save_label().into());
+    let application_feedback = application.feedback();
+    let combined_feedback = match (feedback.is_empty(), application_feedback.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => feedback.to_owned(),
+        (true, false) => application_feedback,
+        (false, false) => format!("{feedback}；{application_feedback}"),
+    };
+    window.set_feedback(combined_feedback.into());
     window.set_running(timer.status() == TimerStatus::Running);
     window.set_paused(timer.status() == TimerStatus::Paused);
     window.set_completed(timer.status() == TimerStatus::Completed);
@@ -383,25 +413,13 @@ fn refresh_main(
 
 fn set_result_feedback<T>(
     feedback: &Rc<RefCell<String>>,
-    result: Result<T, domain::TimerError>,
+    result: Result<T, ApplicationError>,
     action: &str,
 ) {
     *feedback.borrow_mut() = match result {
         Ok(_) => String::new(),
-        Err(error) => format!("{action}失败：{}", timer_error_text(error)),
+        Err(error) => format!("{action}失败：{error}"),
     };
-}
-
-fn timer_error_text(error: domain::TimerError) -> &'static str {
-    match error {
-        domain::TimerError::InvalidSettings => "设置超出范围",
-        domain::TimerError::NoActiveSession => "当前没有活动计时",
-        domain::TimerError::AlreadyRunning => "当前状态不允许开始或修改设置",
-        domain::TimerError::NotRunning => "当前没有运行中的计时",
-        domain::TimerError::NotPaused => "当前计时没有暂停",
-        domain::TimerError::NotCompleted => "当前计时还未完成",
-        domain::TimerError::NotRecovering => "当前没有待恢复的计时",
-    }
 }
 
 fn format_time(remaining_ms: u64) -> String {
@@ -440,4 +458,29 @@ fn resize_main_window(window: &PomodoroWindow, monitor_width_px: u32, dpi: u32, 
     window
         .window()
         .set_size(slint::PhysicalSize::new(width_px, height_px));
+}
+
+fn data_directory() -> Result<PathBuf, io::Error> {
+    if let Some(path) = std::env::var_os("POMODORO_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "Windows LOCALAPPDATA is unavailable",
+            )
+        })?;
+        return Ok(PathBuf::from(local_app_data).join("Pomodoro"));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("pomodoro-data"));
+        Ok(base.join("Pomodoro"))
+    }
 }
