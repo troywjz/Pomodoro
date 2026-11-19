@@ -5,7 +5,7 @@
 ## 本次修改
 
 - 保留 `PomodoroWindow` 现有属性和回调，删除状态与保存标签组成的灰色说明行。错误仍由独立 feedback 展示。
-- 按 `target-width / 192px` 缩放主窗展开/收起态布局间距、环形计时器尺寸/线宽、文字和操作按钮高度；按钮获得焦点时显示边框。
+- 按 `target-width / 192px` 缩放主窗展开/收起高度（300/88 DIP 基准）、外框圆角、布局间距、环形计时器尺寸/线宽、文字和操作按钮高度；按钮获得焦点时显示边框。主窗窗口高度和 Rust 的 `target-width` 共用同一比例。
 - `ActionButton` 保留矩形视觉与指针点击，使用 Slint 1.19 `FocusScope` 接收 Tab 焦点、Enter/Space 激活，并标注 button 角色、标签和禁用状态。
 - 保留设置属性及旧 delta/close 回调声明。公开草稿属性名为 `draft-focus`、`draft-short`、`draft-long`、`draft-rounds`。设置操作修改本地草稿，范围为专注 1–180、短休 1–60、长休 1–120、轮数 1–12；保存只发出 `save-requested(int,int,int,int)`，由 Rust 保存成功后隐藏窗口；取消只发出 `cancel-requested()`，由 Rust 回滚并隐藏窗口。
 - 设置窗口高度为 350px，容纳 26px 标题、四行设置、保存/取消按钮、纵向间距、内边距和边框。

@@ -126,14 +126,14 @@ export component PomodoroWindow inherits Window {
     callback about-requested();
 
     width: target-width;
-    height: expanded ? 300px : 88px;
+    height: (expanded ? 300 : 88) * root.layout-scale * 1px;
     background: dark ? #171b24 : #ffffff;
 
     Rectangle {
         background: dark ? #171b24 : #ffffff;
         border-color: dark ? #394152 : #cbd3df;
         border-width: 1px;
-        border-radius: 16px;
+        border-radius: 16 * root.layout-scale * 1px;
 
         if expanded: VerticalLayout {
             padding: 11 * root.layout-scale * 1px;
