@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -326,12 +326,6 @@ impl Store {
             settings_revision
         };
 
-        if request.session_record.is_some() && request.checkpoint_json.is_some() {
-            return Err(StoreError::InvalidRequest(
-                "checkpoint_json with terminal session_record",
-            ));
-        }
-
         if let Some(checkpoint_json) = &request.checkpoint_json {
             tx.execute(
                 "INSERT INTO active_session(singleton, checkpoint_json, session_revision, updated_utc_ms)
@@ -388,7 +382,9 @@ impl Store {
                     record.reason
                 ],
             )?;
-            tx.execute("DELETE FROM active_session WHERE singleton = 1", [])?;
+            if request.checkpoint_json.is_none() {
+                tx.execute("DELETE FROM active_session WHERE singleton = 1", [])?;
+            }
         }
 
         if let Some(event) = &request.event {
@@ -486,9 +482,9 @@ impl Store {
     }
 
     pub fn export_json(&self, destination: &Path) -> Result<(), StoreError> {
-        if resolves_to_database(destination, &self.db_path) {
+        if is_protected_export_path(destination, &self.data_dir, &self.db_path)? {
             return Err(StoreError::InvalidRequest(
-                "export destination is the database",
+                "export destination is application-managed storage",
             ));
         }
 
@@ -749,11 +745,13 @@ fn create_valid_backup(
             .close()
             .map_err(|(_, error)| StoreError::Sqlite(error))?;
         validate_backup(&partial_path)?;
-        let final_path = backup_dir.join(format!(
-            "backup-{backup_utc_ms}-{revision}-{}.sqlite3",
-            FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::rename(&partial_path, final_path)?;
+        publish_backup_no_replace(
+            &partial_path,
+            &backup_dir,
+            backup_utc_ms,
+            revision,
+            FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        )?;
         Ok(())
     })();
     if result.is_err() {
@@ -854,20 +852,144 @@ fn utc_now_ms() -> i64 {
     i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
-fn resolves_to_database(destination: &Path, database: &Path) -> bool {
-    if destination.exists() {
-        return destination.canonicalize().ok() == database.canonicalize().ok();
+fn is_protected_export_path(
+    destination: &Path,
+    data_dir: &Path,
+    database: &Path,
+) -> Result<bool, StoreError> {
+    let lexical_destination = lexical_absolute_path(destination)?;
+    let lexical_backup_root = lexical_absolute_path(&data_dir.join(BACKUP_DIR))?;
+    if is_same_or_descendant_path(&lexical_destination, &lexical_backup_root) {
+        return Ok(true);
     }
-    let Some(name) = destination.file_name() else {
-        return false;
-    };
-    let Some(parent) = destination.parent() else {
-        return false;
-    };
-    if parent.canonicalize().ok() != database.parent().and_then(|path| path.canonicalize().ok()) {
-        return false;
+
+    let destination = canonicalize_with_missing_suffix(destination)?;
+    let database = canonicalize_with_missing_suffix(database)?;
+    if same_path(&destination, &database) {
+        return Ok(true);
     }
-    name.to_string_lossy().eq_ignore_ascii_case(DATABASE_FILE)
+
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut sidecar_name = database
+            .file_name()
+            .ok_or(StoreError::InvalidRequest("database path"))?
+            .to_os_string();
+        sidecar_name.push(suffix);
+        let sidecar = database.with_file_name(sidecar_name);
+        if same_path(&destination, &canonicalize_with_missing_suffix(&sidecar)?) {
+            return Ok(true);
+        }
+    }
+
+    let backup_root = canonicalize_with_missing_suffix(&data_dir.join(BACKUP_DIR))?;
+    Ok(is_same_or_descendant_path(&destination, &backup_root))
+}
+
+fn canonicalize_with_missing_suffix(path: &Path) -> Result<PathBuf, StoreError> {
+    let normalized = lexical_absolute_path(path)?;
+    let mut existing = normalized.clone();
+    let mut suffix = Vec::new();
+    while !existing.exists() {
+        let name = existing
+            .file_name()
+            .ok_or(StoreError::InvalidRequest("export destination"))?;
+        suffix.push(name.to_os_string());
+        if !existing.pop() {
+            return Err(StoreError::InvalidRequest("export destination"));
+        }
+    }
+
+    let mut resolved = existing.canonicalize()?;
+    for component in suffix.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(normalize_path(&resolved))
+}
+
+fn lexical_absolute_path(path: &Path) -> Result<PathBuf, StoreError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    Ok(normalize_path(&absolute))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !normalized.has_root() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn is_same_or_descendant_path(path: &Path, root: &Path) -> bool {
+    if same_path(path, root) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        let path = path.to_string_lossy().replace('/', "\\");
+        let root = root
+            .to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_owned();
+        path.to_lowercase()
+            .starts_with(&format!("{}\\", root.to_lowercase()))
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(root)
+    }
+}
+
+fn publish_backup_no_replace(
+    partial_path: &Path,
+    backup_dir: &Path,
+    backup_utc_ms: i64,
+    revision: i64,
+    first_sequence: u64,
+) -> Result<PathBuf, StoreError> {
+    for offset in 0..100u64 {
+        let sequence = first_sequence.saturating_add(offset);
+        let final_path = backup_dir.join(format!(
+            "backup-{backup_utc_ms}-{revision}-{sequence}.sqlite3"
+        ));
+        match fs::hard_link(partial_path, &final_path) {
+            Ok(()) => {
+                fs::remove_file(partial_path)?;
+                return Ok(final_path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    Err(StoreError::CorruptDatabase(
+        "could not allocate a non-overwriting backup filename",
+    ))
 }
 
 fn write_atomically(destination: &Path, contents: &[u8]) -> Result<(), StoreError> {
@@ -1121,6 +1243,8 @@ mod tests {
             -360,
             "completed",
         ));
+        let final_checkpoint = r#"{"phase":"short_break","round_index":1}"#;
+        finish.checkpoint_json = Some(final_checkpoint.to_owned());
         finish.event = Some(event(
             "e-finish",
             "s1",
@@ -1134,6 +1258,10 @@ mod tests {
             .expect("terminal data persists even with backup");
         assert_eq!(result.receipt.global_revision, 2);
         assert_eq!(result.backup_status, BackupStatus::Created);
+        assert_eq!(
+            store.load_state().unwrap().checkpoint_json.as_deref(),
+            Some(final_checkpoint)
+        );
         let all_backups = backup_paths(directory.path());
         assert_eq!(all_backups.len(), 2);
         let terminal_backup = all_backups
@@ -1144,6 +1272,29 @@ mod tests {
             })
             .expect("terminal commit backup exists");
         assert_backup_contents(terminal_backup, 1, 2, 2);
+        let backup = Connection::open(terminal_backup).expect("terminal backup opens");
+        let backup_checkpoint: String = backup
+            .query_row(
+                "SELECT checkpoint_json FROM active_session WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("terminal snapshot is in the same backup");
+        assert_eq!(backup_checkpoint, final_checkpoint);
+        drop(backup);
+        drop(store);
+
+        let store = Store::open(directory.path()).expect("restart restores terminal snapshot");
+        assert_eq!(store.open_backup_status(), &BackupStatus::Created);
+        let restored = store
+            .load_state()
+            .expect("completion state reads after restart");
+        assert_eq!(restored.session_revision, 2);
+        let restored_checkpoint: Value =
+            serde_json::from_str(restored.checkpoint_json.as_deref().unwrap()).unwrap();
+        assert_eq!(restored_checkpoint["phase"], "short_break");
+        assert_eq!(restored_checkpoint["round_index"], 1);
+        assert_eq!(backup_paths(directory.path()).len(), 3);
     }
 
     #[test]
@@ -1333,6 +1484,7 @@ mod tests {
 
         let mut failed = request("retry-after-failure", 'b', 1, 200);
         failed.expected_session_revision = Some(1);
+        failed.checkpoint_json = Some(r#"{"phase":"next","round_index":2}"#.to_owned());
         failed.session_record = Some(record("same-session", 100, 200, 0, "completed"));
         failed.event = Some(event(
             "failed-event",
@@ -1346,12 +1498,20 @@ mod tests {
         let state = store.load_state().expect("state still reads");
         assert_eq!(state.global_revision, 1);
         assert_eq!(state.session_revision, 1);
+        assert_eq!(
+            state.checkpoint_json, None,
+            "failed final snapshot rolls back"
+        );
 
         failed.session_record.as_mut().unwrap().session_id = "next-session".to_owned();
         failed.event.as_mut().unwrap().session_id = Some("next-session".to_owned());
         assert!(
             store.commit(&failed).is_ok(),
             "failed transaction left no command receipt"
+        );
+        assert_eq!(
+            store.load_state().unwrap().checkpoint_json.as_deref(),
+            Some(r#"{"phase":"next","round_index":2}"#)
         );
     }
 
@@ -1418,12 +1578,84 @@ mod tests {
     }
 
     #[test]
-    fn export_cannot_replace_the_live_database() {
+    fn export_rejects_database_sidecars_and_backup_tree_without_writing() {
         let directory = tempdir().expect("temporary data directory");
-        let store = Store::open(directory.path()).expect("store opens");
-        assert!(matches!(
-            store.export_json(&directory.path().join(DATABASE_FILE)),
-            Err(StoreError::InvalidRequest(_))
-        ));
+        let mut store = Store::open(directory.path()).expect("store opens");
+        let mut finish = request("protected-export", 'a', 0, 2_000);
+        finish.expected_session_revision = Some(0);
+        finish.session_record = Some(record("protected-session", 1_000, 2_000, 0, "completed"));
+        store
+            .commit(&finish)
+            .expect("valid application backup created");
+
+        let backup_root = directory.path().join(BACKUP_DIR);
+        let backup_path = backup_paths(directory.path()).pop().expect("backup exists");
+        let backup_file_name = backup_path.file_name().unwrap();
+        let original_backup = fs::read(&backup_path).expect("backup bytes read");
+        let mut destinations = vec![
+            directory.path().join(DATABASE_FILE),
+            directory.path().join(format!("{DATABASE_FILE}-wal")),
+            directory.path().join(format!("{DATABASE_FILE}-shm")),
+            directory.path().join(format!("{DATABASE_FILE}-journal")),
+            backup_path.clone(),
+            backup_root.join("nested").join("analysis.json"),
+            backup_root
+                .join("..")
+                .join(BACKUP_DIR)
+                .join(backup_file_name),
+        ];
+        destinations.push(backup_root.clone());
+
+        for destination in destinations {
+            assert!(matches!(
+                store.export_json(&destination),
+                Err(StoreError::InvalidRequest(_))
+            ));
+        }
+
+        assert!(!backup_root.join("nested").exists());
+        assert_eq!(
+            fs::read(&backup_path).expect("backup remains readable"),
+            original_backup
+        );
+        assert_backup_contents(&backup_path, 1, 0, 1);
+        assert_eq!(store.load_state().unwrap().global_revision, 1);
+    }
+
+    #[test]
+    fn backup_filename_collision_preserves_existing_valid_backup() {
+        let root = tempdir().expect("temporary root");
+        let source_dir = root.path().join("source");
+        let mut store = Store::open(&source_dir).expect("source store opens");
+        let mut finish = request("collision-source", 'b', 0, 3_000);
+        finish.expected_session_revision = Some(0);
+        finish.session_record = Some(record("collision-session", 2_000, 3_000, 0, "completed"));
+        store.commit(&finish).expect("source backup created");
+        let source_backup = backup_paths(&source_dir)
+            .pop()
+            .expect("source backup exists");
+        drop(store);
+
+        let collision_dir = root.path().join("collision-backups");
+        fs::create_dir_all(&collision_dir).expect("collision directory created");
+        let existing = collision_dir.join("backup-1234-1-7.sqlite3");
+        fs::copy(&source_backup, &existing).expect("install valid collision fixture");
+        let existing_bytes = fs::read(&existing).expect("old backup bytes read");
+        let partial = collision_dir.join("pending.sqlite3.partial");
+        fs::copy(&source_backup, &partial).expect("install validated backup snapshot");
+
+        let published = publish_backup_no_replace(&partial, &collision_dir, 1234, 1, 7)
+            .expect("publisher retries with an unused filename");
+        assert_eq!(
+            published.file_name().unwrap().to_string_lossy(),
+            "backup-1234-1-8.sqlite3"
+        );
+        assert!(!partial.exists());
+        assert_eq!(
+            fs::read(&existing).expect("old backup remains readable"),
+            existing_bytes
+        );
+        assert_backup_contents(&existing, 1, 0, 1);
+        assert_backup_contents(&published, 1, 0, 1);
     }
 }
