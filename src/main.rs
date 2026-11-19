@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod application;
 mod domain;
 mod platform;
@@ -5,18 +7,57 @@ mod platform;
 use std::cell::{Cell, RefCell};
 use std::io;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use application::{Application, ApplicationError};
 use domain::{DomainEvent, RecoveryChoice, TimerSettings, TimerStatus};
 use platform::{clock_sample, logical_width, monitor_metrics, physical_window_width};
-use slint::{ComponentHandle, Timer, TimerMode};
+use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode};
 use uuid::Uuid;
 
 slint::include_modules!();
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
+    let command_line_mode = std::env::args_os().nth(1).is_some();
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            show_startup_error(&error.to_string(), command_line_mode);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(windows)]
+fn show_startup_error(message: &str, command_line_mode: bool) {
+    if command_line_mode {
+        use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+        // The GUI executable never creates a console. Report CLI errors to its caller's console.
+        unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+        eprintln!("{message}");
+    } else {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+        let caption: Vec<u16> = "Pomodoro 启动失败".encode_utf16().chain([0]).collect();
+        let message: Vec<u16> = message.encode_utf16().chain([0]).collect();
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                message.as_ptr(),
+                caption.as_ptr(),
+                MB_OK | MB_ICONERROR,
+            )
+        };
+    }
+}
+
+#[cfg(not(windows))]
+fn show_startup_error(message: &str, _: bool) {
+    eprintln!("{message}");
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let origin = Instant::now();
     let data_dir = data_directory()?;
     let mut args = std::env::args_os().skip(1);
@@ -46,25 +87,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?));
     let feedback = Rc::new(RefCell::new(String::new()));
     let dark = Rc::new(Cell::new(platform::system_prefers_dark_theme()));
-    let expanded = Rc::new(Cell::new(true));
 
     let main_window = PomodoroWindow::new()?;
     let settings_window = SettingsWindow::new()?;
     let about_window = AboutWindow::new()?;
 
     main_window.set_dark(dark.get());
-    main_window.set_expanded(expanded.get());
     settings_window.set_dark(dark.get());
     about_window.set_dark(dark.get());
     sync_main_window(&main_window, &application.borrow(), &feedback.borrow());
     sync_settings_window(&settings_window, &application.borrow());
 
     let (monitor_width, dpi) = monitor_metrics(&main_window.window());
-    resize_main_window(&main_window, monitor_width, dpi, expanded.get());
+    resize_main_window(&main_window, monitor_width, dpi);
 
     let main_weak = main_window.as_weak();
     let settings_weak = settings_window.as_weak();
     let about_weak = about_window.as_weak();
+
+    {
+        let application = application.clone();
+        let main_weak = main_weak.clone();
+        let settings_weak = settings_weak.clone();
+        let about_weak = about_weak.clone();
+        let feedback = feedback.clone();
+        main_window.window().on_close_requested(move || {
+            let result = application.borrow_mut().prepare_exit(clock_sample(origin));
+            if result.is_ok() {
+                if let Some(window) = settings_weak.upgrade() {
+                    let _ = window.hide();
+                }
+                if let Some(window) = about_weak.upgrade() {
+                    let _ = window.hide();
+                }
+                return CloseRequestResponse::HideWindow;
+            }
+
+            if let Some(window) = main_weak.upgrade() {
+                let old_height = window.get_target_height();
+                window.set_expanded(true);
+                set_result_feedback(&feedback, result, "退出");
+                sync_main_window(&window, &application.borrow(), &feedback.borrow());
+                if window.get_target_height() != old_height {
+                    apply_main_size(&window, window.window().scale_factor());
+                }
+            }
+            CloseRequestResponse::KeepWindowShown
+        });
+    }
+    {
+        let main_weak = main_weak.clone();
+        main_window.on_exit_requested(move || {
+            if let Some(window) = main_weak.upgrade() {
+                window
+                    .window()
+                    .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+            }
+        });
+    }
 
     {
         let application = application.clone();
@@ -161,14 +241,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     {
-        let expanded = expanded.clone();
+        let application = application.clone();
+        let feedback = feedback.clone();
         let main_weak = main_weak.clone();
         main_window.on_toggle_requested(move || {
-            expanded.set(!expanded.get());
             if let Some(window) = main_weak.upgrade() {
-                window.set_expanded(expanded.get());
+                window.set_expanded(!window.get_expanded());
+                sync_main_window(&window, &application.borrow(), &feedback.borrow());
                 let (monitor_width, dpi) = monitor_metrics(&window.window());
-                resize_main_window(&window, monitor_width, dpi, expanded.get());
+                resize_main_window(&window, monitor_width, dpi);
             }
         });
     }
@@ -250,7 +331,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let main_weak = main_weak.clone();
         let dark = dark.clone();
-        let expanded = expanded.clone();
         let settings_weak = settings_weak.clone();
         let about_weak = about_weak.clone();
         let mut last_metrics = (monitor_width, dpi);
@@ -274,7 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let metrics = monitor_metrics(&window.window());
                     if metrics != last_metrics {
                         last_metrics = metrics;
-                        resize_main_window(&window, metrics.0, metrics.1, expanded.get());
+                        resize_main_window(&window, metrics.0, metrics.1);
                     }
                 }
             },
@@ -449,7 +529,11 @@ fn refresh_main(
     feedback: &Rc<RefCell<String>>,
 ) {
     if let Some(window) = main_weak.upgrade() {
+        let old_height = window.get_target_height();
         sync_main_window(&window, &application.borrow(), &feedback.borrow());
+        if window.get_target_height() != old_height {
+            apply_main_size(&window, window.window().scale_factor());
+        }
     }
 }
 
@@ -490,24 +574,19 @@ fn progress_path(progress: f32, compact: bool) -> String {
     format!("M {center} 2 A {radius} {radius} 0 {large_arc} 1 {x:.3} {y:.3}")
 }
 
-fn resize_main_window(window: &PomodoroWindow, monitor_width_px: u32, dpi: u32, expanded: bool) {
-    let (width_px, height_px, width_dip) = window_dimensions(monitor_width_px, dpi, expanded);
-    window.set_target_width(width_dip);
-    window
-        .window()
-        .set_size(slint::PhysicalSize::new(width_px, height_px));
+fn resize_main_window(window: &PomodoroWindow, monitor_width_px: u32, dpi: u32) {
+    let width_px = physical_window_width(monitor_width_px as i32);
+    window.set_target_width(logical_width(width_px, dpi));
+    apply_main_size(window, if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 });
 }
 
-fn window_dimensions(monitor_width_px: u32, dpi: u32, expanded: bool) -> (u32, u32, f32) {
-    let width_px = physical_window_width(monitor_width_px as i32);
-    let width_dip = logical_width(width_px, dpi);
-    let layout_scale = width_dip / 192.0;
-    let dpi_scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
-    let base_height_dip = if expanded { 300.0 } else { 88.0 };
-    let height_px = (base_height_dip * layout_scale * dpi_scale)
-        .round()
-        .max(1.0) as u32;
-    (width_px, height_px, width_dip)
+fn apply_main_size(window: &PomodoroWindow, scale: f32) {
+    let width = (window.get_target_width() * scale).round().max(1.0) as u32;
+    let height = (window.get_target_height() * scale).round().max(1.0) as u32;
+    let size = slint::PhysicalSize::new(width, height);
+    if window.window().size() != size {
+        window.window().set_size(size);
+    }
 }
 
 fn data_directory() -> Result<PathBuf, io::Error> {
@@ -532,18 +611,5 @@ fn data_directory() -> Result<PathBuf, io::Error> {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("pomodoro-data"));
         Ok(base.join("Pomodoro"))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::window_dimensions;
-
-    #[test]
-    fn ten_percent_window_scales_height_at_small_and_high_dpi_sizes() {
-        assert_eq!(window_dimensions(1366, 96, true), (137, 214, 137.0));
-        assert_eq!(window_dimensions(1366, 96, false), (137, 63, 137.0));
-        assert_eq!(window_dimensions(2560, 120, true), (256, 400, 204.8));
-        assert_eq!(window_dimensions(3840, 144, true), (384, 600, 256.0));
     }
 }
