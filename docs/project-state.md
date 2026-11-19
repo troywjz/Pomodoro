@@ -34,4 +34,4 @@
 
 组织恢复记录见[整理记录](team/cleanup-report.md)。后续Lead读取此页、任务说明及必要决策接续，历史聊天归档保存。
 
-本轮供用户审阅的具体推荐与批准范围集中于[用户评审与启动决定](plans/active/m0-user-decisions.md)。候选已在 Lead 本地分支汇总，用户批准记录保持待填写。
+M0评审输入见[原审批清单](plans/active/m0-user-decisions.md)，当前用户批准及新增要求见[批准记录](product/approval-20261118.md)。执行任务按M1分配及独立PR推进。
