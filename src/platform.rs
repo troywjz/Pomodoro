@@ -4,10 +4,37 @@ use chrono::{Local, Utc};
 
 use crate::domain::ClockSample;
 
-pub fn clock_sample(origin: Instant) -> ClockSample {
+#[cfg(windows)]
+pub fn clock_sample(_origin: Instant) -> ClockSample {
+    use std::sync::OnceLock;
+
+    use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+    use windows_sys::Win32::System::WindowsProgramming::QueryUnbiasedInterruptTimePrecise;
+
+    // These counters share the Windows boot origin. Keep a process-local baseline so
+    // domain samples start near the caller's Instant origin without including sleep.
+    static ORIGIN: OnceLock<(u64, u64)> = OnceLock::new();
+    let mut active_100ns = 0_u64;
+    unsafe { QueryUnbiasedInterruptTimePrecise(&mut active_100ns) };
+    let boot_ms = unsafe { GetTickCount64() };
+    let (active_origin, boot_origin) = *ORIGIN.get_or_init(|| (active_100ns, boot_ms));
     let local = Local::now();
     ClockSample {
-        monotonic_ms: origin.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        monotonic_ms: active_100ns.saturating_sub(active_origin) / 10_000,
+        boot_elapsed_ms: boot_ms.saturating_sub(boot_origin),
+        utc_ms: Utc::now().timestamp_millis(),
+        local_date: local.format("%Y-%m-%d").to_string(),
+        local_offset_minutes: local.offset().local_minus_utc() / 60,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn clock_sample(origin: Instant) -> ClockSample {
+    let local = Local::now();
+    let elapsed = origin.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    ClockSample {
+        monotonic_ms: elapsed,
+        boot_elapsed_ms: elapsed,
         utc_ms: Utc::now().timestamp_millis(),
         local_date: local.format("%Y-%m-%d").to_string(),
         local_offset_minutes: local.offset().local_minus_utc() / 60,
@@ -144,5 +171,16 @@ mod tests {
     fn physical_width_converts_to_logical_width_at_dpi() {
         assert!((logical_width(256, 120) - 204.8).abs() < 0.001);
         assert!((logical_width(384, 144) - 256.0).abs() < 0.001);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn fallback_clock_uses_milliseconds_and_advances() {
+        let origin = Instant::now();
+        let first = clock_sample(origin);
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let next = clock_sample(origin);
+        assert!(next.monotonic_ms >= first.monotonic_ms);
+        assert_eq!(next.boot_elapsed_ms, next.monotonic_ms);
     }
 }
