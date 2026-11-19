@@ -235,6 +235,27 @@ impl Application {
         Ok(event)
     }
 
+    /// Flushes the latest reliable timer state before an orderly application exit.
+    /// Running sessions are sampled through `now` and saved as paused so a restart
+    /// never counts time spent while the application was closed.
+    pub fn prepare_exit(&mut self, now: ClockSample) -> Result<(), ApplicationError> {
+        if self.pending.is_some() {
+            self.retry_pending(now.clone())?;
+        }
+
+        match self.timer.status() {
+            TimerStatus::Running => match self.pause(now) {
+                Ok(_) => Ok(()),
+                Err(ApplicationError::RecoveryDecisionRequired) if self.pending.is_none() => Ok(()),
+                Err(error) => Err(error),
+            },
+            _ if self.runtime_dirty => {
+                self.persist_candidate(self.timer.clone(), None, None, None, now, false)
+            }
+            _ => Ok(()),
+        }
+    }
+
     pub fn resume(&mut self, now: ClockSample) -> Result<DomainEvent, ApplicationError> {
         self.ensure_no_pending()?;
         let mut candidate = self.timer.clone();
@@ -322,8 +343,6 @@ impl Application {
         }
         if self.pending.is_some() {
             messages.push("本地保存正在重试".to_owned());
-        } else if self.runtime_dirty {
-            messages.push("计时进度待保存".to_owned());
         }
         if let Some(error) = &self.last_save_error {
             messages.push(error.clone());
@@ -696,6 +715,50 @@ mod tests {
             recovered.timer.session.as_ref().unwrap().remaining_ms,
             30_000
         );
+    }
+
+    #[test]
+    fn ordinary_runtime_progress_has_no_unsaved_prompt_and_exit_saves_latest_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = Application::open(directory.path(), sample(0, 1_000)).unwrap();
+        app.start("session-exit".into(), sample(0, 1_000)).unwrap();
+        app.tick(sample(8_000, 9_000));
+        assert!(app.feedback().is_empty());
+
+        app.prepare_exit(sample(20_000, 21_000)).unwrap();
+        assert_eq!(app.timer.status(), TimerStatus::Paused);
+        assert_eq!(
+            app.timer.session.as_ref().unwrap().remaining_ms,
+            25 * 60_000 - 20_000
+        );
+
+        let reopened = Application::open(directory.path(), sample(9_000_000, 99_000_000)).unwrap();
+        assert_eq!(reopened.timer.status(), TimerStatus::Recovery);
+        assert_eq!(
+            reopened.timer.session.as_ref().unwrap().remaining_ms,
+            25 * 60_000 - 20_000
+        );
+    }
+
+    #[test]
+    fn exit_at_deadline_persists_completion_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = Application::open(directory.path(), sample(0, 1_000)).unwrap();
+        app.update_settings(
+            TimerSettings {
+                focus_minutes: 1,
+                ..TimerSettings::default()
+            },
+            sample(0, 1_000),
+        )
+        .unwrap();
+        app.start("session-deadline".into(), sample(0, 1_000))
+            .unwrap();
+        app.prepare_exit(sample(60_000, 61_000)).unwrap();
+        assert_eq!(app.timer.status(), TimerStatus::Completed);
+        let reopened = Application::open(directory.path(), sample(70_000, 71_000)).unwrap();
+        assert_eq!(reopened.timer.status(), TimerStatus::Completed);
+        assert_eq!(reopened.session_revision, app.session_revision);
     }
 
     #[test]
