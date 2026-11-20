@@ -4,7 +4,7 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[Download Pomodoro v0.1.0 for Windows x64](https://github.com/troywjz/Pomodoro/releases/tag/v0.1.0)
+[Download Pomodoro v0.2.0 for Windows x64](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0)
 
 ## Features
 
@@ -15,7 +15,7 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
 ## Install and run
 
-1. Download and extract `Pomodoro-v0.1.0-windows-x64.zip` from the [latest release](https://github.com/troywjz/Pomodoro/releases/tag/v0.1.0).
+1. Download and extract `Pomodoro-v0.2.0-windows-x64.zip` from the [v0.2.0 release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0).
 2. Double-click `Pomodoro.exe`.
 3. If Windows reports that `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install Microsoft's [Visual C++ x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe), then reopen Pomodoro.
 
@@ -36,7 +36,7 @@ Each operation appends a JSON record to `journal.jsonl`; the app replays the log
 
 On its first launch, a JSONL-capable build imports v0.1 data from `%LOCALAPPDATA%\Pomodoro`. After the imported journal is validated, the old SQLite database, its sidecar files, and its backups are preserved under `data\legacy-import`.
 
-The linked v0.1.0 release predates this change and stores SQLite in `%LOCALAPPDATA%\Pomodoro`. Run a JSONL-capable build to migrate that data beside the executable.
+The v0.2.0 release uses JSONL storage. When upgrading from v0.1.0, the first launch imports the old data and keeps a verified archive under `data\legacy-import`.
 
 ## Export data for analysis
 
@@ -46,7 +46,7 @@ Open PowerShell in the extracted application folder and run:
 .\Pomodoro.exe --export-json "$env:USERPROFILE\Documents\pomodoro-analysis.json"
 ```
 
-The JSON export contains a consistent snapshot of timer state, current and previous settings, sessions, and events. Running the export command on existing data follows the normal startup-backup behavior. CSV export and importing an export are outside v0.1.0.
+The JSON export contains a consistent snapshot of timer state, current and previous settings, sessions, and events. Running the export command on existing data follows the normal startup-backup behavior. CSV export and importing an export are not included in v0.2.0.
 
 ## Build from source
 
@@ -71,4 +71,4 @@ Pomodoro source code is licensed under the MIT License. Slint 1.19 is used under
 
 ## Validation
 
-The v0.1.0 Windows MSVC debug build passed 18 application tests and 8 independent storage tests. Manual Windows checks covered keyboard input, settings, always-on-top behavior, close-time saving, restart recovery, automatic backups, and JSON export. Real sleep and hibernate, Hyper-V, multiple-monitor DPI changes, screen-reader narration, and release performance targets remain follow-up validation areas.
+The v0.2.0 Windows MSVC build passed the 5 storage tests and `cargo check --locked`. The v0.1.0 Windows manual checks covered keyboard input, settings, always-on-top behavior, close-time saving, restart recovery, automatic backups, and JSON export. Real sleep and hibernate, Hyper-V, multiple-monitor DPI changes, screen-reader narration, and release performance targets remain follow-up validation areas.
