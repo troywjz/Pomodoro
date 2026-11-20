@@ -834,12 +834,13 @@ mod tests {
                 entry
                     .path()
                     .extension()
-                    .is_some_and(|extension| extension == "sqlite3")
+                    .is_some_and(|extension| extension == "jsonl")
             })
             .count();
         assert_eq!(backups, 1);
 
-        let export = directory.path().join("analysis.json");
+        let export_directory = tempfile::tempdir().unwrap();
+        let export = export_directory.path().join("analysis.json");
         app.store.export_json(&export).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&fs::read(export).unwrap()).unwrap();
         assert_eq!(value["sessions"].as_array().unwrap().len(), 1);
@@ -875,7 +876,8 @@ mod tests {
             sample(2, 1_002),
         )
         .unwrap();
-        let export = directory.path().join("analysis.json");
+        let export_directory = tempfile::tempdir().unwrap();
+        let export = export_directory.path().join("analysis.json");
         app.store.export_json(&export).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&fs::read(export).unwrap()).unwrap();
         assert_eq!(value["settings_history"].as_array().unwrap().len(), 3);

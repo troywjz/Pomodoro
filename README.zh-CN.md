@@ -4,7 +4,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[下载 Pomodoro v0.1.0 Windows x64 版本](https://github.com/troywjz/Pomodoro/releases/tag/v0.1.0)
+[下载 Pomodoro v0.2.0 Windows x64 版本](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0)
 
 ## 功能
 
@@ -15,7 +15,7 @@
 
 ## 安装与运行
 
-1. 从[最新 Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.1.0)下载并解压 `Pomodoro-v0.1.0-windows-x64.zip`。
+1. 从 [v0.2.0 Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0) 下载并解压 `Pomodoro-v0.2.0-windows-x64.zip`。
 2. 双击 `Pomodoro.exe`。
 3. 如果 Windows 提示缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll`，请安装微软的 [Visual C++ x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)，再重新打开程序。
 
@@ -36,7 +36,7 @@ data\
 
 支持 JSONL 的版本首次启动时，会从 `%LOCALAPPDATA%\Pomodoro` 导入 v0.1 数据。新日志验证成功后，旧 SQLite 数据库、附属文件和备份会保留在 `data\legacy-import`。
 
-上方链接的 v0.1.0 Release 早于这次变更，使用 `%LOCALAPPDATA%\Pomodoro` 下的 SQLite。运行支持 JSONL 的新版后，数据会迁移到程序旁的目录。
+v0.2.0 Release 使用 JSONL 存储。从 v0.1.0 升级时，首次启动会导入旧数据，并在 `data\legacy-import` 保留经验证的旧数据归档。
 
 ## 导出数据供分析
 
@@ -46,7 +46,7 @@ data\
 .\Pomodoro.exe --export-json "$env:USERPROFILE\Documents\pomodoro-analysis.json"
 ```
 
-JSON 导出包含一致性读取到的计时状态、当前和历史设置、会话及事件。对已有数据运行导出命令时，也会执行正常的启动备份流程。v0.1.0 尚未提供 CSV 导出或导入功能。
+JSON 导出包含一致性读取到的计时状态、当前和历史设置、会话及事件。对已有数据运行导出命令时，也会执行正常的启动备份流程。v0.2.0 暂未提供 CSV 导出或导入功能。
 
 ## 从源码构建
 
@@ -71,4 +71,4 @@ Pomodoro 源码采用 MIT 许可证。Slint 1.19 使用 Royalty-Free Desktop, Mo
 
 ## 验证范围
 
-v0.1.0 的 Windows MSVC 调试构建通过 18 项应用测试和 8 项独立存储测试。Windows 手动检查覆盖键盘操作、设置、窗口置顶、关闭前保存、重启恢复、自动备份和 JSON 导出。真实睡眠与休眠、Hyper-V、多显示器 DPI、屏幕阅读器播报及 Release 资源指标留待后续验证。
+v0.2.0 的 Windows MSVC 构建通过 5 项存储测试和 `cargo check --locked`。v0.1.0 的 Windows 手动检查覆盖键盘操作、设置、窗口置顶、关闭前保存、重启恢复、自动备份和 JSON 导出。真实睡眠与休眠、Hyper-V、多显示器 DPI、屏幕阅读器播报及 Release 资源指标留待后续验证。
