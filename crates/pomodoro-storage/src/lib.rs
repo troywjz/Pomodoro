@@ -240,7 +240,7 @@ impl Store {
         &self.open_backup_status
     }
     pub fn load_state(&self) -> Result<StoredState, StoreError> {
-        self.lock.lock_shared()?;
+        self.lock.lock_exclusive()?;
         let state = read_journal(&self.journal_path, true).map(|(snapshot, _)| snapshot.state);
         FileExt::unlock(&self.lock)?;
         state
@@ -326,7 +326,7 @@ impl Store {
                 "export destination is application-managed storage",
             ));
         }
-        self.lock.lock_shared()?;
+        self.lock.lock_exclusive()?;
         let loaded = read_journal(&self.journal_path, true);
         FileExt::unlock(&self.lock)?;
         let (s, _) = loaded?;
@@ -768,16 +768,12 @@ fn migrate_legacy(data_dir: &Path, legacy_dir: &Path, journal: &Path) -> Result<
             }
         }
     }
-    fs::rename(&partial, journal)?;
     let sqlite_backups = legacy_dir.join(BACKUP_DIR);
     if sqlite_backups.exists() {
         let archived_backups = dir.join("sqlite-backups");
-        if legacy_dir == data_dir {
-            fs::rename(&sqlite_backups, &archived_backups)?;
-        } else {
-            copy_tree_verified(&sqlite_backups, &archived_backups)?;
-        }
+        copy_tree_verified(&sqlite_backups, &archived_backups)?;
     }
+    fs::rename(&partial, journal)?;
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let src = PathBuf::from(format!("{}{}", old.display(), suffix));
         if src.exists() {
@@ -793,9 +789,9 @@ fn migrate_legacy(data_dir: &Path, legacy_dir: &Path, journal: &Path) -> Result<
                 fs::remove_file(src)?;
             }
         }
-        if sqlite_backups.exists() {
-            fs::remove_dir_all(sqlite_backups)?;
-        }
+    }
+    if sqlite_backups.exists() {
+        fs::remove_dir_all(sqlite_backups)?;
     }
     Ok(())
 }
