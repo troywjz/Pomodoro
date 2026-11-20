@@ -1,26 +1,70 @@
 # Pomodoro
 
-轻量级Windows悬浮番茄钟，目标使用Rust+Slint，覆盖可靠计时、置顶、托盘、Hyper-V工作场景和本地数据。
+A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
-M0已获用户确认，M1已交付可运行 Windows 基线。设计、自动备份、Windows 平台和 Slint 视图分别提交 PR。构建、实际窗口操作和数据验证见[M1 交付记录](docs/plans/deliveries/m1-foundation.md)。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
+[Download Pomodoro v0.1.0 for Windows x64](https://github.com/troywjz/Pomodoro/releases/tag/v0.1.0)
 
-- [项目状态与下一步](docs/project-state.md)
-- [文档地图](docs/README.md)
-- [产品v0.2](docs/product/requirements-v0.2.md)
-- [UI v2](docs/design/ui-v2/ui-v2-review.md) · [SVG](docs/design/ui-v2/pomodoro-ui-v2.svg) · [PNG](docs/design/ui-v2/pomodoro-ui-v2-preview.png)
-- [契约评审](docs/contracts/review-packet.md)
-- [验收计划](docs/acceptance.md) · [评审登记](docs/quality/review-register.md)
-- [协作规则](docs/team/README.md) · [历史研究](docs/archive/role-studies/README.md)
-- [Notion](https://www.notion.so/41be33444f5f80698ee7d99318343c08) · [Figma](https://www.figma.com/design/4U9TTroE0k4Rkef4K9LIG7/Pomodoro) · [GitHub任务](https://github.com/troywjz/Pomodoro/issues)
+## Features
 
-Figma不可用时采用可编辑SVG；[精简设计 PR #23](https://github.com/troywjz/Pomodoro/pull/23)与[自动备份 PR #25](https://github.com/troywjz/Pomodoro/pull/25)已分别提交。M0批准及新增要求见[批准记录](docs/product/approval-20261118.md)。
+- Focus, short-break, and long-break timers with pause, resume, and recovery.
+- A compact window that follows the Windows light or dark theme and can stay on top.
+- Local SQLite storage for sessions, timer events, checkpoints, and settings history.
+- Verified automatic backups and JSON export for later analysis.
 
-在 Windows MSVC 工具链下运行 `cargo run --locked`。已有计时数据可通过 `cargo run --locked -- --export-json .\pomodoro-analysis.json` 导出，包含会话历史、事件、配置版本和时间字段。自动备份与历史默认保留，具体触发条件见交付记录。
+## Install and run
 
-直接打开 Windows 可执行文件会显示无系统标题栏的计时窗。可在顶部阶段标题或收起后的显示区拖动窗口。使用界面内的退出按钮或 Alt+F4 时，程序先保存当前进度，随后关闭。下次打开可从上次保存的进度继续。
+1. Download and extract `Pomodoro-v0.1.0-windows-x64.zip` from the [latest release](https://github.com/troywjz/Pomodoro/releases/tag/v0.1.0).
+2. Double-click `Pomodoro.exe`.
+3. If Windows reports that `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install Microsoft's [Visual C++ x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe), then reopen Pomodoro.
 
-在「设置」中打开「窗口置顶」并点「保存」，计时窗会保持在普通桌面窗口上方。开关默认关闭，保存后重启沿用。
+The window has no Windows title bar. Drag the phase-and-round heading to move it. Open **Settings** to change timer durations, long-break interval, or **Always on top**. **Save** applies changes. **Cancel** discards them. The **Exit** button or Alt+F4 saves the current timer state before closing. On the next launch, choose whether to continue, keep the timer paused, or discard the active session.
 
-项目自身源码保持MIT；Slint按已选的[Royalty-free 2.0桌面路线](https://slint.dev/terms-and-conditions#slint-royalty-free-license-2-0)使用，以上为官方提供的公开网页署名徽章。其他依赖保留各自许可与版权信息。
+## Data and backups
+
+Pomodoro stores data in:
+
+```text
+%LOCALAPPDATA%\Pomodoro
+├── pomodoro.sqlite3
+└── backups\
+    └── verified SQLite snapshots
+```
+
+The database keeps completed, interrupted, and skipped sessions, active timer checkpoints, timer events, time-zone offsets, and each saved settings revision. Automatic backups run when an existing database opens, after a session ends, and every 24 hours when data has changed. Valid backups and history remain until you remove the application data.
+
+## Export data for analysis
+
+Open PowerShell in the extracted application folder and run:
+
+```powershell
+.\Pomodoro.exe --export-json "$env:USERPROFILE\Documents\pomodoro-analysis.json"
+```
+
+The JSON export contains a consistent snapshot of timer state, current and previous settings, sessions, and events. Running the export command on an existing database follows the normal startup-backup behavior. CSV export and importing an export are outside v0.1.0.
+
+## Build from source
+
+Install Rust 1.100.0 with the MSVC target and the Visual Studio C++ Build Tools, then run:
+
+```powershell
+cargo run --locked
+```
+
+To run the test suite and build a release executable:
+
+```powershell
+cargo test --locked --all-targets
+cargo build --release --locked
+```
+
+Set `POMODORO_DATA_DIR` to use a separate data directory for development or testing.
+
+## License
+
+Pomodoro source code is licensed under the MIT License. Slint 1.19 is used under its Royalty-Free Desktop, Mobile, and Web Applications License 2.0. The project provides the required Slint attribution on its [website](https://github.com/troywjz/Pomodoro). Dependency license expressions and included license texts are listed in the release package's `THIRD-PARTY-NOTICES.txt`.
+
+## Validation
+
+The v0.1.0 Windows MSVC debug build passed 18 application tests and 8 independent storage tests. Manual Windows checks covered keyboard input, settings, always-on-top behavior, close-time saving, restart recovery, automatic backups, and JSON export. Real sleep and hibernate, Hyper-V, multiple-monitor DPI changes, screen-reader narration, and release performance targets remain follow-up validation areas.
