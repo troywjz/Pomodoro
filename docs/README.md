@@ -9,6 +9,7 @@
 | 设计证据 | [说明](design/ui-v2/ui-v2-review.md)、[v2.1浅色](design/ui-v2/ui-v2-states-light-preview.png)、[v2.1深色](design/ui-v2/ui-v2-states-dark-preview.png)、[原四画板SVG](design/ui-v2/pomodoro-ui-v2.svg) |
 | 工程契约 | [模块边界](architecture/modules.md)、[契约入口](contracts/README.md)、[评审包](contracts/review-packet.md) |
 | 验收与问题 | [验收计划](acceptance.md)、[评审登记](quality/review-register.md)、[M0独立复核](quality/m0-review-20261118.md) |
+| 当前存储实现 | [JSONL与自动备份交付](plans/deliveries/automatic-backup.md)、[存储接口](contracts/m1-storage-port.md) |
 | 当前工作 | [待办与依赖](plans/backlog.md)、[M0任务分配](plans/active/m0-task-allocation.md)、[UI收尾](plans/active/ui-v2-review.md)、[契约评审](plans/active/contracts-review.md) |
 | 用户待决定 | [M0评审与启动决定](plans/active/m0-user-decisions.md) |
 | 任务/交接 | [任务模板](templates/task-brief.md)、[交付模板](templates/delivery.md) |

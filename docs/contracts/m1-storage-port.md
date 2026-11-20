@@ -6,7 +6,8 @@
 
 ## 最小公开API
 
-- `Store::open(data_dir: &std::path::Path) -> Result<Store, StoreError>`：主库`pomodoro.sqlite3`，应用内`backups`目录；保留已存在主库。首次建空库不生成空备份，已有有效库启动时自动备份。
+- `Store::open(data_dir: &std::path::Path) -> Result<Store, StoreError>`：活动日志为`journal.jsonl`，应用内`backups`目录；首次建空日志不生成空备份，已有有效数据启动时自动备份。
+- `Store::open_with_legacy(data_dir, legacy_dir)`：新版本首次启动时，可从旧版本数据目录只读导入SQLite，并在验证后把旧库、sidecar和SQLite备份归档到`legacy-import`。
 - `Store::open_backup_status(&self) -> &BackupStatus`：读取`open`期间对已有有效库执行的自动备份结果。新建空库返回`NotDue`；启动备份失败保留`Store`和主数据，并通过此方法返回可读错误，供界面重试。
 - `Store::load_state(&self) -> Result<StoredState, StoreError>`：返回`global_revision: u64`、`session_revision: u64`、`settings_revision: u64`、`checkpoint_json: Option<String>`、`settings_json: Option<String>`。
 - `Store::commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, StoreError>`：原子提交业务变更、事件、revision及命令回执。重复command_id+payload_hash返回原回执，不重复追加记录；不同hash返回冲突。
@@ -21,17 +22,17 @@
 
 `CommitOutcome`包含`receipt: Receipt`及`backup_status: BackupStatus`；`Receipt`字段为`command_id: String`、`global_revision: u64`、`session_revision: u64`、`settings_revision: u64`、`committed_utc_ms: i64`、`duplicate: bool`。`BackupStatus`至少区分`NotDue`、`Created`、`Failed`，并支持界面呈现可重试错误。
 
-接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。终结`session_record`与调用方提供的最终`checkpoint_json`在同一事务提交；终结记录未提供新checkpoint时，事务清除原活动checkpoint。
+接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。终结`session_record`与调用方提供的最终`checkpoint_json`写入同一commit frame；终结记录未提供新checkpoint时，清除原活动checkpoint。
 
 配置保留：每次成功写入`settings_json`均持久保留对应`settings_revision`、完整配置JSON和UTC更新时间；`export_json`输出全部配置版本及当前配置，不按时间或数量清理。
 
-路径与发布保护：`export_json`写入前拒绝主库、主库WAL/SHM/journal sidecar以及应用管理的`backups`子树，比较路径时先做规范化并解析现存路径前缀。自动备份发布采用原子不覆盖文件名冲突的创建方式；冲突时使用新文件名，保留原有效备份。发布依赖同目录硬链接，本机NTFS已验证；文件系统不支持硬链接时返回`BackupStatus::Failed`，已提交的主数据和成功回执保留。
+路径与发布保护：`export_json`写入前拒绝日志、锁文件以及应用管理的`backups`和`legacy-import`子树。自动备份为经回放验证的JSONL副本，保留全部成功备份。多句柄通过`journal.lock`文件锁串行写入；每次写入前重读日志并执行CAS与幂等校验。
 
-备份失败发生在成功业务提交之后时，业务提交仍返回成功回执，backup_status显式报告失败。备份使用SQLite一致性备份API、完整性校验和成功标记；主库和历史保留。清历史保留活动/配置/回执与应用备份；永久清除的完整流程留在对应数据管理任务，M1基线不提供简化删除入口。
+每个commit frame只存request delta和receipt，重启时按序回放；journal每行追加后执行flush与sync_all。仅不完整末行会在独占锁下截断，完整但无效的frame会报告损坏。导入旧SQLite时先执行integrity_check，写临时JSONL并回放验证，随后归档旧数据库和备份，再发布活动日志。清历史保留活动/配置/回执与应用备份；永久清除的完整流程留在对应数据管理任务，M1基线不提供简化删除入口。
 
 ## 必须执行的验证
 
-1. 不手动调用备份入口，启动已有数据库和提交终结session后自动生成可打开、integrity_check通过且保留预期行的备份。
-2. 同一command_id重试、同ID异payload、陈旧revision、事务失败与重启读回。
+1. 不手动调用备份入口，启动已有日志和提交终结session后自动生成可回放、保留预期状态的备份。
+2. 同一command_id重试、同ID异payload、陈旧revision、追加失败恢复与重启读回。
 3. 保留多个终结记录、暂停/恢复事件、UTC/偏移及配置快照；导出可供离线分析且不删除历史。
 4. 模拟备份目录故障，主数据提交/保留与backup_status的结果符合上述边界。

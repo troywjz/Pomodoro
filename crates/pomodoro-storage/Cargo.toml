@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
-description = "SQLite persistence and automatic backups for Pomodoro"
+description = "Append-only JSON persistence and automatic backups for Pomodoro"
 
 [dependencies]
-rusqlite = { version = "0.43.0", features = ["backup", "bundled"] }
+# SQLite is read-only and used solely to migrate data created by v0.1.x.
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+fs2 = "0.4.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.154"
 
