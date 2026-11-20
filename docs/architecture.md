@@ -2,6 +2,8 @@
 
 > 技术候选仍待用户批准；本轮组织责任已按[模块边界](architecture/modules.md)重整，跨角色待决项统一在[评审包](contracts/review-packet.md)处理。
 
+> 实现更新（2026-11-20）：用户已指定活动数据存为程序旁的追加式 JSONL，v0.2.0 已发布。SQLite 数据库只用于从 v0.1 版本迁移，细节见[存储交付记录](plans/deliveries/automatic-backup.md)。本文余下 Windows、托盘、DPI 与资源章节保留候选/验证状态。
+
 **状态：待审批（技术研究草案）**
 **关联：** [GitHub Issue #2](https://github.com/troywjz/Pomodoro/issues/2)
 **目标环境：** Windows 11 x64；主机检测到 MSVC，当前 Rust 未在 PATH 中。`HypervisorPresent=True` 记录为环境线索，Hyper-V 场景仍需实际验收。
@@ -20,7 +22,7 @@
 | 应用状态 | 专注/短休/长休、开始/暂停/恢复/结束、恢复提示 | 独立于 UI 的状态模型，状态转换后写持久化层 |
 | 计时 | 单调时间差、睡眠策略和恢复策略 | 睡眠时显式暂停；唤醒后询问用户是否恢复；崩溃重启后询问是否恢复；唤醒或重启不自动判定完成 |
 | Windows 适配 | 电源消息、topmost、DPI、托盘和窗口定位 | 通过窄接口隔离平台 API，消息投递至 UI 线程 |
-| 本地存储 | 设置、活动会话和完成历史 | SQLite 单库事务候选，配置也可存于同库，避免双数据源 |
+| 本地存储 | 设置、活动会话和完成历史 | `data\journal.jsonl` 追加式日志、`data\backups` 验证备份；v0.1 SQLite 只读迁移 |
 
 ## 计时语义
 
@@ -44,7 +46,7 @@ Win32 `SetWindowPos(HWND_TOPMOST)` 使窗体位于非 topmost 窗口之上且失
 
 ## 存储选择
 
-SQLite 作为会话状态、设置与历史单库候选，以事务完成状态转换后的持久化。SQLite 官方文档说明事务原子提交与 WAL 行为，并阐述 synchronous 配置对掉电耐久性的影响。首版可采用默认 rollback journal 以减少多文件管理；是否使用 WAL、同步级别和备份策略待数据量与性能实测后审批。应用数据目录、schema 迁移、损坏恢复与保留上限需在需求中确定。
+当前实现将每个持久操作保存为一条 JSONL commit frame，文件锁串行化写入，启动时按顺序重放。完整历史与备份默认持续保留。首次从 v0.1 升级时只读导入 SQLite 数据，校验日志后保留旧库及备份归档。详细契约见[存储接口](contracts/m1-storage-port.md)。
 
 ## 资源目标（尚未测量）
 

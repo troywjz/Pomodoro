@@ -1,6 +1,6 @@
 # 架构决策记录
 
-**状态：全部待审批。** 此记录归纳候选方案，不表示用户已批准。
+**状态：** 本页保留架构候选的审批历史。ADR-006 已由用户于 2026-11-20 更新为 v0.2.0 JSONL 实现；其他候选状态仍以对应审批与项目状态记录为准。
 
 | ID | 主题 | 候选决策 | 状态 / 待确认 |
 | --- | --- | --- | --- |
@@ -9,7 +9,7 @@
 | ADR-003 | Renderer | Skia 或 software renderer；统一资源目标为空闲 CPU ≤ 0.5%、运行 CPU ≤ 1%、启动 ≤ 1 秒、磁盘 ≤ 30 MiB、内存 ≤ 60 MiB | 待审批、待实测；使用 Release 构建验证透明窗体和兼容性 |
 | ADR-004 | 托盘 | 优先评估 Slint 原生 `SystemTrayIcon` 和同一 event loop | 待审批；Rust `system-tray` feature 默认启用，当前官方 API 文档含 Windows Shell notification area 支持；版本待锁定 |
 | ADR-005 | 休眠计时 | 睡眠时显式暂停；唤醒后请求用户确认恢复；崩溃后请求用户确认恢复；锁屏继续；改墙钟时不自动扣减 | 待审批；评估 `QueryUnbiasedInterruptTime(Precise)`，结合电源通知验证 |
-| ADR-006 | 持久化 | SQLite 单库事务涵盖会话状态、设置和历史 | 待审批；journal、synchronous、迁移与恢复策略需确定 |
+| ADR-006 | 持久化 | 活动数据采用程序旁 `data\journal.jsonl` 追加式 JSONL；每次操作追加记录，自动备份也为 JSONL。v0.1 SQLite 仅用于一次性只读导入 | 已按用户 2026-11-20 指示实现并随 v0.2.0 发布；旧数据归档于 `data\legacy-import` |
 | ADR-007 | DPI 与定位 | 评估 Per-Monitor V2；位置按逻辑坐标保存，显示变化后修正可见范围 | 待审批、待多屏实测 |
 | ADR-008 | 置顶范围 | 常规桌面的 `HWND_TOPMOST` 行为为目标；安全桌面、独占全屏和 VMConnect 边界需场景验收 | 待审批；定义产品文案和验收范围 |
 
