@@ -13,7 +13,7 @@
 | P-01 MVP 默认行为 | 25/5/15 分钟、每四轮长休；完成后手动开始下一阶段；暂停不计时，睡眠暂停/唤醒询问、锁屏继续；关闭隐藏到托盘；明确退出先暂停再选保存/放弃/取消；完成视觉提示、内置声音默认关。配置范围和保留策略见原需求及行为候选的继承清单。 | 待用户确认 |
 | P-02 本轮行为细化 | D-01：中断专注计实际投入、不计完成轮数。D-02：清历史保留配置/活动，先备份；永久清除最终确认后结束活动并删除应用管理数据/备份，确认前取消保留状态。D-03：JSON 含配置、历史和标明状态的活动快照，CSV 面向历史分析，MVP 导入待后续。D-04：无目标/已选目标 idle 分开，恢复由用户选择后推进。 | D-01—D-04 均待批准 |
 | D-01 本轮视觉与交互设计 | [浅色预览](../../design/ui-v2/ui-v2-states-light-preview.png)、[深色预览](../../design/ui-v2/ui-v2-states-dark-preview.png)；每主题九个状态，对应可编辑 SVG 与 [UI 说明](../../design/ui-v2/ui-v2-review.md)。 | 待用户设计确认 |
-| A-01 M0 技术路线与发布许可 | Rust + Slint 单进程 Windows、清晰五层职责、SQLite 本地事务。推荐保留 Pomodoro 现有 MIT，使用 Slint Community/Royalty-Free 桌面路线并履行 AboutSlint 或官网 badge 署名条件。比较见[契约评审包](../../contracts/review-packet.md)，官方依据见 [Slint 许可选择](https://slint.dev/get-started)与[署名规范](https://slint.dev/brand-guidelines)。 | 待用户路线/许可批准 |
+| A-01 M0 技术路线与发布许可 | Rust + Slint 单进程 Windows、清晰五层职责。持久化已由用户更新为程序旁 JSONL；v0.1 SQLite 只用于迁移。保留 Pomodoro 现有 MIT，Slint Community/Royalty-Free 桌面路线及署名见[契约评审包](../../contracts/review-packet.md)。 | M0 路线已批准；存储更新见[补充决定](../../product/approval-20261118.md)，v0.2.0 已发布 |
 | R-01 资源验收参考与范围 | 建议使用用户日常的当前 Windows 宿主机作参考；按原需求的 release 测量方法登记环境与目标。建议 30 MiB 磁盘目标统计应用文件和默认本地数据，累计历史、手动备份及外部导出另列实际体积；预算范围随用户决定记录。CPU、工作集和启动时间均是待测目标。 | 待用户选择参考机/预算边界 |
 
 ## Figma 与 M1 启动门槛
@@ -25,6 +25,6 @@
 1. 先审阅本地图稿；原生 Figma 同步并确认后，再批准启动 M1。
 2. 明确接受当前可编辑 SVG 作为本轮 M0 设计输入，并单独批准 M0 技术路线和 M1 启动；Figma 同步继续作为后续设计任务。
 
-用户已选择SVG作为不可用Figma的替代输入，并批准M0继续推进，M1首轮已派发；工程任务实际测量并收敛renderer、工具链及SQLite参数。PR #21已合并，后续PR合并与正式发布继续由用户决定。
+用户已选择SVG作为不可用Figma的替代输入，并批准M0继续推进。M1已实现并发布 v0.2.0；活动存储采用 JSONL，旧 SQLite 仅用于迁移。
 
 原表中的待批准标签反映评审时点；当前统一以批准记录及后续用户修订为准，用户本轮的界面和数据要求优先实施。

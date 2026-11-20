@@ -1,13 +1,13 @@
 # 模块责任与依赖
 
-状态：`M0-Contracts v1.0.1` 候选；待产品输入、用户批准 M0 候选技术路线/完整设计及 M1 启动授权。共享字段唯一来源为[模块接口与数据契约提案](../interface-contract.md)。获批启动 M1 后建立工程并执行验证。
+状态：职责边界继续沿用 `M0-Contracts v1.0.1`。用户已授权 M1 并于 2026-11-20 更新活动存储为 JSONL；当前实现见[存储交付记录](../plans/deliveries/automatic-backup.md)及[存储接口](../contracts/m1-storage-port.md)。
 
 | 逻辑模块 | 候选责任 | 显式边界 |
 |---|---|---|
 | domain | 纯计时状态转移、阶段/轮次、revision 计算、接收注入的 `ClockSample` | 不调用 Windows、UI、DB 或时钟全局 API |
-| application | 串行命令、expected revision 校验、候选快照、持久化请求/回执、effect 顺序、恢复/退出协调 | 不直接操纵控件或 SQLite 细节；不定义产品统计语义 |
+| application | 串行命令、expected revision 校验、候选快照、持久化请求/回执、effect 顺序、恢复/退出协调 | 不直接操纵控件或 JSONL 文件细节；不定义产品统计语义 |
 | platform/windows | 时钟/系统事件采集、主题/DPI/显示器几何、托盘、窗口、单实例 | 不自行推进业务计时；系统采样能力待实测 |
-| storage | Repository、SQLite 事务/CAS、schema迁移、一致性备份及查询 | 不定义统计口径；字段以统一契约为准 |
+| storage | Repository、JSONL 追加/CAS、旧版导入、JSONL 自动备份及查询 | 不定义统计口径；字段以统一契约为准 |
 | ui | Slint 视图、布局、操作、辅助技术、渲染 | 不维护第二份计时状态；不直接访问平台或存储 API |
 
 ```text
@@ -27,4 +27,4 @@ application 是跨层状态转换的唯一协调者。持久业务转换在 Stor
 | Windows 平台 | ClockSample、ThemeSnapshot、LogicalRect | suspend/resume、漏通知、混合DPI、多屏、主题变化和窗口恢复实测 |
 | Slint UI | 批准后的 TimerSnapshot、ThemeSnapshot、Geometry | UI v2已确定方向维持；中文字体、无障碍文本和路径支持作为 M1 renderer 准入；具体 renderer 经目标机与 Hyper-V 工程验证收敛 |
 
-候选依赖及许可证比较见[统一契约第6节](../interface-contract.md#6-依赖边界与模块引用)与[评审包](../contracts/review-packet.md)。先由用户批准 M0 候选技术路线/完整设计及 M1 启动；再创建 Cargo 工程、业务源码和实现型试验。M1 工程证据用于收敛 crate/API 版本、renderer 和 SQLite durability，结果再提交架构细节审批。
+候选依赖及许可证比较见[统一契约第6节](../interface-contract.md#6-依赖边界与模块引用)与[评审包](../contracts/review-packet.md)。Rust/Slint 基线、JSONL 存储与 v0.1 SQLite 导入器已进入 M1/v0.2 实现；renderer、多屏、休眠和资源目标仍按对应验证任务跟踪。

@@ -7,7 +7,7 @@
 - 用户于2026-11-18批准M0并要求继续推进：SVG替代不可用的Figma、界面精简、自动备份与充分保留本地分析数据。当前进入M1首轮实施，见[批准记录](product/approval-20261118.md)与[任务分配](plans/active/m1-dispatch.md)。
 - 用户确定UI四项方向：时间前圆圈、按钮文字居中、跟随系统主题且默认浅色、展开/收起同宽并按所在屏宽10%比例适配。
 - UI v2.1 本地浅深各九状态 SVG/PNG 已渲染、计算及目视，与契约 v1.0.1 均通过独立候选复核，见[本轮审查](quality/m0-review-20261118.md)。Figma 本轮实际返回 Starter MCP 额度限制，原生同步待完成。
-- M1 Windows 调试构建、计时与真实存储链路已验证，见[交付记录](plans/deliveries/m1-foundation.md)。用户于2026-11-19授权直接合并本轮PR。正式发布继续由用户审批。
+- M1 Windows 调试构建、计时与真实存储链路已验证，见[交付记录](plans/deliveries/m1-foundation.md)。v0.2.0 JSONL 版本于2026-11-20发布，见[GitHub Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0)。
 - 用户于2026-11-20明确将活动存储改为程序旁 `data\journal.jsonl` 的追加式 JSONL；SQLite只作为v0.1旧数据的一次性导入格式。迁移、备份和当前存储契约见[存储交付](plans/deliveries/automatic-backup.md)与[存储接口](contracts/m1-storage-port.md)。
 
 ## 最小阅读
