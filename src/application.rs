@@ -89,8 +89,17 @@ impl From<serde_json::Error> for ApplicationError {
 }
 
 impl Application {
+    #[cfg(test)]
     pub fn open(data_dir: &Path, now: ClockSample) -> Result<Self, ApplicationError> {
-        let store = Store::open(data_dir)?;
+        Self::open_with_legacy(data_dir, data_dir, now)
+    }
+
+    pub fn open_with_legacy(
+        data_dir: &Path,
+        legacy_dir: &Path,
+        now: ClockSample,
+    ) -> Result<Self, ApplicationError> {
+        let store = Store::open_with_legacy(data_dir, legacy_dir)?;
         let backup_status = store.open_backup_status().clone();
         let stored = store.load_state()?;
         let settings = stored

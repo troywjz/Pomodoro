@@ -22,7 +22,7 @@
 
 `CommitOutcome`包含`receipt: Receipt`及`backup_status: BackupStatus`；`Receipt`字段为`command_id: String`、`global_revision: u64`、`session_revision: u64`、`settings_revision: u64`、`committed_utc_ms: i64`、`duplicate: bool`。`BackupStatus`至少区分`NotDue`、`Created`、`Failed`，并支持界面呈现可重试错误。
 
-接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。终结`session_record`与调用方提供的最终`checkpoint_json`在同一事务提交；终结记录未提供新checkpoint时，事务清除原活动checkpoint。
+接口澄清：`open`需要返回`Store`以便在启动备份失败时继续使用并保留主数据，原签名没有承载`BackupStatus`的返回槽位，因此增加`open_backup_status`只读访问器；这是启动结果的公开读取入口。重复命令回执的`backup_status`为`NotDue`，重试不重复触发副作用。涉及活动快照/终结记录时必须提供`expected_session_revision`，修改配置时必须提供`expected_settings_revision`。终结`session_record`与调用方提供的最终`checkpoint_json`写入同一commit frame；终结记录未提供新checkpoint时，清除原活动checkpoint。
 
 配置保留：每次成功写入`settings_json`均持久保留对应`settings_revision`、完整配置JSON和UTC更新时间；`export_json`输出全部配置版本及当前配置，不按时间或数量清理。
 
@@ -32,7 +32,7 @@
 
 ## 必须执行的验证
 
-1. 不手动调用备份入口，启动已有数据库和提交终结session后自动生成可打开、integrity_check通过且保留预期行的备份。
-2. 同一command_id重试、同ID异payload、陈旧revision、事务失败与重启读回。
+1. 不手动调用备份入口，启动已有日志和提交终结session后自动生成可回放、保留预期状态的备份。
+2. 同一command_id重试、同ID异payload、陈旧revision、追加失败恢复与重启读回。
 3. 保留多个终结记录、暂停/恢复事件、UTC/偏移及配置快照；导出可供离线分析且不删除历史。
 4. 模拟备份目录故障，主数据提交/保留与backup_status的结果符合上述边界。

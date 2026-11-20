@@ -10,8 +10,8 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
 - Focus, short-break, and long-break timers with pause, resume, and recovery.
 - A compact window that follows the Windows light or dark theme and can stay on top.
-- Local SQLite storage for sessions, timer events, checkpoints, and settings history.
-- Verified automatic backups and JSON export for later analysis.
+- Local append-only JSONL storage for sessions, timer events, checkpoints, and settings history.
+- Automatic JSONL backups and JSON export for later analysis.
 
 ## Install and run
 
@@ -23,16 +23,20 @@ The window has no Windows title bar. Drag the phase-and-round heading to move it
 
 ## Data and backups
 
-Pomodoro stores data in:
+The JSONL-capable build stores data next to `Pomodoro.exe`:
 
 ```text
-%LOCALAPPDATA%\Pomodoro
-├── pomodoro.sqlite3
+data\
+├── journal.jsonl
 └── backups\
-    └── verified SQLite snapshots
+    └── verified JSONL snapshots
 ```
 
-The database keeps completed, interrupted, and skipped sessions, active timer checkpoints, timer events, time-zone offsets, and each saved settings revision. Automatic backups run when an existing database opens, after a session ends, and every 24 hours when data has changed. Valid backups and history remain until you remove the application data.
+Each operation appends a JSON record to `journal.jsonl`; the app replays the log on startup. It retains completed, interrupted, and skipped sessions, active timer checkpoints, timer events, time-zone offsets, and every saved settings revision. Automatic backups run when existing data opens, after a session ends, and every 24 hours when data has changed. The app does not automatically delete history or valid backups.
+
+On its first launch, a JSONL-capable build imports v0.1 data from `%LOCALAPPDATA%\Pomodoro`. After the imported journal is validated, the old SQLite database, its sidecar files, and its backups are preserved under `data\legacy-import`.
+
+The linked v0.1.0 release predates this change and stores SQLite in `%LOCALAPPDATA%\Pomodoro`. Run a JSONL-capable build to migrate that data beside the executable.
 
 ## Export data for analysis
 
@@ -42,7 +46,7 @@ Open PowerShell in the extracted application folder and run:
 .\Pomodoro.exe --export-json "$env:USERPROFILE\Documents\pomodoro-analysis.json"
 ```
 
-The JSON export contains a consistent snapshot of timer state, current and previous settings, sessions, and events. Running the export command on an existing database follows the normal startup-backup behavior. CSV export and importing an export are outside v0.1.0.
+The JSON export contains a consistent snapshot of timer state, current and previous settings, sessions, and events. Running the export command on existing data follows the normal startup-backup behavior. CSV export and importing an export are outside v0.1.0.
 
 ## Build from source
 

@@ -60,6 +60,7 @@ fn show_startup_error(message: &str, _: bool) {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let origin = Instant::now();
     let data_dir = data_directory()?;
+    let legacy_dir = legacy_data_directory();
     let mut args = std::env::args_os().skip(1);
     if let Some(command) = args.next() {
         let destination = match (command.to_str(), args.next(), args.next()) {
@@ -72,17 +73,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .into());
             }
         };
-        if !data_dir.join("pomodoro.sqlite3").is_file() {
-            return Err(
-                io::Error::new(io::ErrorKind::NotFound, "Pomodoro database not found").into(),
-            );
+        let legacy_database = legacy_dir
+            .as_ref()
+            .is_some_and(|directory| directory.join("pomodoro.sqlite3").is_file());
+        if !data_dir.join("journal.jsonl").is_file()
+            && !data_dir.join("pomodoro.sqlite3").is_file()
+            && !legacy_database
+        {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Pomodoro data not found").into());
         }
-        let store = pomodoro_storage::Store::open(&data_dir)?;
+        let store = pomodoro_storage::Store::open_with_legacy(
+            &data_dir,
+            legacy_dir.as_deref().unwrap_or(&data_dir),
+        )?;
         store.export_json(&destination)?;
         return Ok(());
     }
-    let application = Rc::new(RefCell::new(Application::open(
+    let application = Rc::new(RefCell::new(Application::open_with_legacy(
         &data_dir,
+        legacy_dir.as_deref().unwrap_or(&data_dir),
         clock_sample(origin),
     )?));
     let feedback = Rc::new(RefCell::new(String::new()));
@@ -608,23 +617,26 @@ fn data_directory() -> Result<PathBuf, io::Error> {
     if let Some(path) = std::env::var_os("POMODORO_DATA_DIR") {
         return Ok(PathBuf::from(path));
     }
+    let executable = std::env::current_exe()?;
+    let directory = executable.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "The executable directory is unavailable",
+        )
+    })?;
+    Ok(directory.join("data"))
+}
 
+fn legacy_data_directory() -> Option<PathBuf> {
+    if std::env::var_os("POMODORO_DATA_DIR").is_some() {
+        return None;
+    }
     #[cfg(windows)]
     {
-        let local_app_data = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "Windows LOCALAPPDATA is unavailable",
-            )
-        })?;
-        return Ok(PathBuf::from(local_app_data).join("Pomodoro"));
+        std::env::var_os("LOCALAPPDATA").map(|path| PathBuf::from(path).join("Pomodoro"))
     }
-
     #[cfg(not(windows))]
     {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir().join("pomodoro-data"));
-        Ok(base.join("Pomodoro"))
+        None
     }
 }
