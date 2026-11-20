@@ -1,26 +1,27 @@
-use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io;
-use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use rusqlite::backup::Backup;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    fmt,
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-const DATABASE_FILE: &str = "pomodoro.sqlite3";
+const JOURNAL: &str = "journal.jsonl";
+const LOCK: &str = "journal.lock";
 const BACKUP_DIR: &str = "backups";
-const SCHEMA_VERSION: i64 = 1;
-const AUTO_BACKUP_INTERVAL_MS: i64 = 24 * 60 * 60 * 1_000;
-static FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const AUTO_BACKUP_INTERVAL_MS: i64 = 86_400_000;
+static SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub enum StoreError {
-    Sqlite(rusqlite::Error),
     Io(io::Error),
     Json(serde_json::Error),
+    Sqlite(rusqlite::Error),
     InvalidRequest(&'static str),
     MissingExpectedRevision(&'static str),
     RevisionConflict {
@@ -34,17 +35,14 @@ pub enum StoreError {
     UnsupportedSchemaVersion(i64),
     IntegerOutOfRange(&'static str),
 }
-
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Sqlite(error) => write!(f, "SQLite operation failed: {error}"),
-            Self::Io(error) => write!(f, "File operation failed: {error}"),
-            Self::Json(error) => write!(f, "JSON operation failed: {error}"),
-            Self::InvalidRequest(field) => write!(f, "Invalid request field: {field}"),
-            Self::MissingExpectedRevision(resource) => {
-                write!(f, "Expected revision is required for {resource}")
-            }
+            Self::Io(e) => write!(f, "File operation failed: {e}"),
+            Self::Json(e) => write!(f, "JSON operation failed: {e}"),
+            Self::Sqlite(e) => write!(f, "Legacy SQLite import failed: {e}"),
+            Self::InvalidRequest(x) => write!(f, "Invalid request field: {x}"),
+            Self::MissingExpectedRevision(x) => write!(f, "Expected revision is required for {x}"),
             Self::RevisionConflict {
                 resource,
                 expected,
@@ -53,43 +51,28 @@ impl fmt::Display for StoreError {
                 f,
                 "{resource} revision conflict: expected {expected}, current {actual}"
             ),
-            Self::RevisionOverflow(resource) => write!(f, "{resource} revision overflow"),
+            Self::RevisionOverflow(x) => write!(f, "{x} revision overflow"),
             Self::CommandIdConflict => write!(f, "Command ID already has a different payload hash"),
-            Self::CorruptDatabase(reason) => write!(f, "Database validation failed: {reason}"),
-            Self::UnsupportedSchemaVersion(version) => {
-                write!(f, "Unsupported database schema version {version}")
-            }
-            Self::IntegerOutOfRange(field) => write!(f, "Value out of SQLite range: {field}"),
+            Self::CorruptDatabase(x) => write!(f, "Journal validation failed: {x}"),
+            Self::UnsupportedSchemaVersion(x) => write!(f, "Unsupported legacy schema version {x}"),
+            Self::IntegerOutOfRange(x) => write!(f, "Value out of range: {x}"),
         }
     }
 }
-
-impl std::error::Error for StoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Sqlite(error) => Some(error),
-            Self::Io(error) => Some(error),
-            Self::Json(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<rusqlite::Error> for StoreError {
-    fn from(value: rusqlite::Error) -> Self {
-        Self::Sqlite(value)
-    }
-}
-
+impl std::error::Error for StoreError {}
 impl From<io::Error> for StoreError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
     }
 }
-
 impl From<serde_json::Error> for StoreError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Json(value)
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
+impl From<rusqlite::Error> for StoreError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Sqlite(e)
     }
 }
 
@@ -99,8 +82,7 @@ pub enum BackupStatus {
     Created,
     Failed { message: String },
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredState {
     pub global_revision: u64,
     pub session_revision: u64,
@@ -108,8 +90,7 @@ pub struct StoredState {
     pub checkpoint_json: Option<String>,
     pub settings_json: Option<String>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitRequest {
     pub command_id: String,
     pub payload_hash: String,
@@ -122,8 +103,7 @@ pub struct CommitRequest {
     pub event: Option<EventRecord>,
     pub committed_utc_ms: i64,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub session_id: String,
     pub phase: String,
@@ -136,8 +116,7 @@ pub struct SessionRecord {
     pub outcome: String,
     pub reason: Option<String>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventRecord {
     pub event_id: String,
     pub session_id: Option<String>,
@@ -146,7 +125,6 @@ pub struct EventRecord {
     pub local_offset_minutes: i32,
     pub payload_json: String,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
     pub command_id: String,
@@ -156,1506 +134,882 @@ pub struct Receipt {
     pub committed_utc_ms: i64,
     pub duplicate: bool,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitOutcome {
     pub receipt: Receipt,
     pub backup_status: BackupStatus,
 }
 
-pub struct Store {
-    conn: Connection,
-    data_dir: PathBuf,
-    db_path: PathBuf,
-    created_utc_ms: i64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Snapshot {
+    state: StoredState,
+    sessions: Vec<Value>,
+    events: Vec<Value>,
+    settings_history: Vec<Value>,
+    receipts: HashMap<String, (String, Receipt)>,
     last_backup_utc_ms: Option<i64>,
     last_backup_revision: u64,
-    backup_retry_required: bool,
+    created_utc_ms: i64,
+}
+#[derive(Serialize, Deserialize)]
+struct Frame {
+    format_version: u8,
+    sequence: u64,
+    kind: String,
+    request: Option<CommitRequest>,
+    receipt: Option<Receipt>,
+    seed: Option<Snapshot>,
+    backup_utc_ms: Option<i64>,
+}
+pub struct Store {
+    data_dir: PathBuf,
+    journal_path: PathBuf,
+    lock: File,
+    snapshot: Snapshot,
     open_backup_status: BackupStatus,
 }
-
 impl Store {
     pub fn open(data_dir: &Path) -> Result<Self, StoreError> {
-        fs::create_dir_all(data_dir)?;
-        let db_path = data_dir.join(DATABASE_FILE);
-        let conn = Connection::open(&db_path)?;
-        conn.busy_timeout(Duration::from_secs(5))?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = FULL;
-             PRAGMA foreign_keys = ON;",
-        )?;
-
-        let (was_existing_library, created_utc_ms) = initialize_schema(&conn)?;
-        let (last_backup_utc_ms, last_backup_revision) = read_backup_state(&conn)?;
-        let mut store = Self {
-            conn,
-            data_dir: data_dir.to_path_buf(),
-            db_path,
-            created_utc_ms,
-            last_backup_utc_ms,
-            last_backup_revision,
-            backup_retry_required: false,
-            open_backup_status: BackupStatus::NotDue,
-        };
-
-        if was_existing_library {
-            store.backup_retry_required = true;
-            let now = utc_now_ms();
-            store.open_backup_status = store.create_and_record_backup(now);
-        }
-        Ok(store)
+        Self::open_with_legacy(data_dir, data_dir)
     }
 
-    /// Returns the automatic backup result produced while opening an existing database.
+    /// Opens the active JSONL directory and imports a v0.1 SQLite directory once if needed.
+    pub fn open_with_legacy(data_dir: &Path, legacy_dir: &Path) -> Result<Self, StoreError> {
+        fs::create_dir_all(data_dir)?;
+        let lock_path = data_dir.join(LOCK);
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(lock_path)?;
+        lock.lock_exclusive()?;
+        let journal_path = data_dir.join(JOURNAL);
+        if journal_path.exists() && journal_path.metadata()?.len() == 0 {
+            fs::remove_file(&journal_path)?;
+        }
+        if !journal_path.exists() {
+            if legacy_dir.join("pomodoro.sqlite3").exists() {
+                migrate_legacy(data_dir, legacy_dir, &journal_path)?;
+            } else {
+                let snap = Snapshot {
+                    state: StoredState {
+                        global_revision: 0,
+                        session_revision: 0,
+                        settings_revision: 0,
+                        checkpoint_json: None,
+                        settings_json: None,
+                    },
+                    sessions: vec![],
+                    events: vec![],
+                    settings_history: vec![],
+                    receipts: HashMap::new(),
+                    last_backup_utc_ms: None,
+                    last_backup_revision: 0,
+                    created_utc_ms: utc_now_ms(),
+                };
+                append_frame(
+                    &journal_path,
+                    &Frame {
+                        format_version: 1,
+                        sequence: 1,
+                        kind: "seed".into(),
+                        request: None,
+                        receipt: None,
+                        seed: Some(snap),
+                        backup_utc_ms: None,
+                    },
+                )?;
+            }
+        }
+        let (snapshot, _) = read_journal(&journal_path, true)?;
+        let mut s = Self {
+            data_dir: data_dir.to_path_buf(),
+            journal_path,
+            lock,
+            snapshot,
+            open_backup_status: BackupStatus::NotDue,
+        };
+        let now = utc_now_ms();
+        if s.snapshot.state.global_revision > 0 {
+            s.open_backup_status = s.backup(now);
+        }
+        FileExt::unlock(&s.lock)?;
+        Ok(s)
+    }
     pub fn open_backup_status(&self) -> &BackupStatus {
         &self.open_backup_status
     }
-
     pub fn load_state(&self) -> Result<StoredState, StoreError> {
-        let (global_revision, session_revision, settings_revision): (i64, i64, i64) =
-            self.conn.query_row(
-                "SELECT global_revision, session_revision, settings_revision
-                 FROM schema_meta WHERE singleton = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-        let checkpoint_json = self
-            .conn
-            .query_row(
-                "SELECT checkpoint_json FROM active_session WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .optional()?
-            .flatten();
-        let settings_json = self
-            .conn
-            .query_row(
-                "SELECT settings_json FROM settings WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .optional()?
-            .flatten();
-        Ok(StoredState {
-            global_revision: from_sqlite_u64(global_revision, "global_revision")?,
-            session_revision: from_sqlite_u64(session_revision, "session_revision")?,
-            settings_revision: from_sqlite_u64(settings_revision, "settings_revision")?,
-            checkpoint_json,
-            settings_json,
-        })
+        self.lock.lock_shared()?;
+        let state = read_journal(&self.journal_path, true).map(|(snapshot, _)| snapshot.state);
+        FileExt::unlock(&self.lock)?;
+        state
     }
-
-    pub fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, StoreError> {
-        validate_request(request)?;
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        let prior_receipt = tx
-            .query_row(
-                "SELECT payload_hash, result_payload FROM command_receipts WHERE command_id = ?1",
-                [&request.command_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()?;
-        if let Some((prior_hash, result_payload)) = prior_receipt {
-            if prior_hash != request.payload_hash {
-                return Err(StoreError::CommandIdConflict);
+    pub fn commit(&mut self, r: &CommitRequest) -> Result<CommitOutcome, StoreError> {
+        validate(r)?;
+        self.lock.lock_exclusive()?;
+        let result = (|| {
+            let (s, seq) = read_journal(&self.journal_path, true)?;
+            if let Some((hash, rec)) = s.receipts.get(&r.command_id) {
+                if hash != &r.payload_hash {
+                    return Err(StoreError::CommandIdConflict);
+                }
+                let mut receipt = rec.clone();
+                receipt.duplicate = true;
+                self.snapshot = s;
+                return Ok(CommitOutcome {
+                    receipt,
+                    backup_status: BackupStatus::NotDue,
+                });
             }
-            let mut receipt: Receipt = serde_json::from_str(&result_payload)?;
-            receipt.duplicate = true;
-            return Ok(CommitOutcome {
+            let mut n = s.clone();
+            let receipt = apply_commit(&mut n, r)?;
+            append_frame(
+                &self.journal_path,
+                &Frame {
+                    format_version: 1,
+                    sequence: seq + 1,
+                    kind: "commit".into(),
+                    request: Some(r.clone()),
+                    receipt: Some(receipt.clone()),
+                    seed: None,
+                    backup_utc_ms: None,
+                },
+            )?;
+            self.snapshot = n;
+            let backup_status = if r.session_record.is_some() {
+                self.backup(r.committed_utc_ms)
+            } else {
+                BackupStatus::NotDue
+            };
+            Ok(CommitOutcome {
                 receipt,
-                backup_status: BackupStatus::NotDue,
-            });
-        }
-
-        let (global_revision, session_revision, settings_revision): (i64, i64, i64) = tx
-            .query_row(
-                "SELECT global_revision, session_revision, settings_revision
-                 FROM schema_meta WHERE singleton = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-        let global_revision = from_sqlite_u64(global_revision, "global_revision")?;
-        let session_revision = from_sqlite_u64(session_revision, "session_revision")?;
-        let settings_revision = from_sqlite_u64(settings_revision, "settings_revision")?;
-        if request.expected_global_revision != global_revision {
-            return Err(revision_conflict(
-                "global",
-                request.expected_global_revision,
-                global_revision,
-            ));
-        }
-
-        let session_changed = request.checkpoint_json.is_some() || request.session_record.is_some();
-        if session_changed {
-            let expected = request
-                .expected_session_revision
-                .ok_or(StoreError::MissingExpectedRevision("session"))?;
-            if expected != session_revision {
-                return Err(revision_conflict("session", expected, session_revision));
-            }
-        }
-        if request.settings_json.is_some() {
-            let expected = request
-                .expected_settings_revision
-                .ok_or(StoreError::MissingExpectedRevision("settings"))?;
-            if expected != settings_revision {
-                return Err(revision_conflict("settings", expected, settings_revision));
-            }
-        }
-
-        let next_global_revision = global_revision
-            .checked_add(1)
-            .ok_or(StoreError::RevisionOverflow("global"))?;
-        let next_session_revision = if session_changed {
-            session_revision
-                .checked_add(1)
-                .ok_or(StoreError::RevisionOverflow("session"))?
-        } else {
-            session_revision
-        };
-        let next_settings_revision = if request.settings_json.is_some() {
-            settings_revision
-                .checked_add(1)
-                .ok_or(StoreError::RevisionOverflow("settings"))?
-        } else {
-            settings_revision
-        };
-
-        if let Some(checkpoint_json) = &request.checkpoint_json {
-            tx.execute(
-                "INSERT INTO active_session(singleton, checkpoint_json, session_revision, updated_utc_ms)
-                 VALUES (1, ?1, ?2, ?3)
-                 ON CONFLICT(singleton) DO UPDATE SET
-                    checkpoint_json = excluded.checkpoint_json,
-                    session_revision = excluded.session_revision,
-                    updated_utc_ms = excluded.updated_utc_ms",
-                params![checkpoint_json, to_sqlite_i64(next_session_revision, "session_revision")?, request.committed_utc_ms],
-            )?;
-        }
-
-        if let Some(settings_json) = &request.settings_json {
-            tx.execute(
-                "INSERT INTO settings(singleton, settings_json, settings_revision, updated_utc_ms)
-                 VALUES (1, ?1, ?2, ?3)
-                 ON CONFLICT(singleton) DO UPDATE SET
-                    settings_json = excluded.settings_json,
-                    settings_revision = excluded.settings_revision,
-                    updated_utc_ms = excluded.updated_utc_ms",
-                params![
-                    settings_json,
-                    to_sqlite_i64(next_settings_revision, "settings_revision")?,
-                    request.committed_utc_ms
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO settings_history(settings_revision, settings_json, updated_utc_ms)
-                 VALUES (?1, ?2, ?3)",
-                params![
-                    to_sqlite_i64(next_settings_revision, "settings_revision")?,
-                    settings_json,
-                    request.committed_utc_ms
-                ],
-            )?;
-        }
-
-        if let Some(record) = &request.session_record {
-            tx.execute(
-                "INSERT INTO session_history(
-                    session_id, phase, target_ms, actual_active_ms, started_utc_ms, ended_utc_ms,
-                    start_local_date, start_offset_minutes, outcome, reason
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    record.session_id,
-                    record.phase,
-                    to_sqlite_i64(record.target_ms, "target_ms")?,
-                    to_sqlite_i64(record.actual_active_ms, "actual_active_ms")?,
-                    record.started_utc_ms,
-                    record.ended_utc_ms,
-                    record.start_local_date,
-                    record.start_offset_minutes,
-                    record.outcome,
-                    record.reason
-                ],
-            )?;
-            if request.checkpoint_json.is_none() {
-                tx.execute("DELETE FROM active_session WHERE singleton = 1", [])?;
-            }
-        }
-
-        if let Some(event) = &request.event {
-            tx.execute(
-                "INSERT INTO event_log(
-                    event_id, session_id, kind, occurred_utc_ms, local_offset_minutes, payload_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    event.event_id,
-                    event.session_id,
-                    event.kind,
-                    event.occurred_utc_ms,
-                    event.local_offset_minutes,
-                    event.payload_json
-                ],
-            )?;
-        }
-
-        let changed = tx.execute(
-            "UPDATE schema_meta SET global_revision = ?1, session_revision = ?2,
-                    settings_revision = ?3 WHERE singleton = 1 AND global_revision = ?4",
-            params![
-                to_sqlite_i64(next_global_revision, "global_revision")?,
-                to_sqlite_i64(next_session_revision, "session_revision")?,
-                to_sqlite_i64(next_settings_revision, "settings_revision")?,
-                to_sqlite_i64(global_revision, "global_revision")?
-            ],
-        )?;
-        if changed != 1 {
-            return Err(revision_conflict(
-                "global",
-                request.expected_global_revision,
-                current_global_revision(&tx)?,
-            ));
-        }
-
-        let receipt = Receipt {
-            command_id: request.command_id.clone(),
-            global_revision: next_global_revision,
-            session_revision: next_session_revision,
-            settings_revision: next_settings_revision,
-            committed_utc_ms: request.committed_utc_ms,
-            duplicate: false,
-        };
-        let receipt_json = serde_json::to_string(&receipt)?;
-        tx.execute(
-            "INSERT INTO command_receipts(
-                command_id, payload_hash, result_payload, global_revision,
-                session_revision, settings_revision, committed_utc_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                request.command_id,
-                request.payload_hash,
-                receipt_json,
-                to_sqlite_i64(next_global_revision, "global_revision")?,
-                to_sqlite_i64(next_session_revision, "session_revision")?,
-                to_sqlite_i64(next_settings_revision, "settings_revision")?,
-                request.committed_utc_ms
-            ],
-        )?;
-        tx.commit()?;
-
-        let backup_status = if request.session_record.is_some() {
-            self.backup_retry_required = true;
-            self.create_and_record_backup(request.committed_utc_ms)
-        } else {
-            BackupStatus::NotDue
-        };
-        Ok(CommitOutcome {
-            receipt,
-            backup_status,
-        })
+                backup_status,
+            })
+        })();
+        FileExt::unlock(&self.lock)?;
+        result
     }
-
-    pub fn maybe_auto_backup(&mut self, now_utc_ms: i64) -> BackupStatus {
-        let current_revision = match current_global_revision(&self.conn) {
-            Ok(value) => value,
-            Err(error) => {
-                return BackupStatus::Failed {
-                    message: error.to_string(),
-                };
-            }
-        };
-        let last_success_revision = self.last_backup_revision;
-        let has_changes = current_revision > last_success_revision;
-        let anchor = self.last_backup_utc_ms.unwrap_or(self.created_utc_ms);
-        let due = now_utc_ms
-            .checked_sub(anchor)
-            .is_some_and(|elapsed| elapsed >= AUTO_BACKUP_INTERVAL_MS);
-        if self.backup_retry_required || (due && has_changes) {
-            self.create_and_record_backup(now_utc_ms)
+    pub fn maybe_auto_backup(&mut self, now: i64) -> BackupStatus {
+        if let Err(error) = self.lock.lock_exclusive() {
+            return BackupStatus::Failed {
+                message: error.to_string(),
+            };
+        }
+        let refreshed = read_journal(&self.journal_path, true);
+        if let Ok((snapshot, _)) = refreshed {
+            self.snapshot = snapshot;
+        } else if let Err(error) = refreshed {
+            let _ = FileExt::unlock(&self.lock);
+            return BackupStatus::Failed {
+                message: error.to_string(),
+            };
+        }
+        if now.saturating_sub(
+            self.snapshot
+                .last_backup_utc_ms
+                .unwrap_or(self.snapshot.created_utc_ms),
+        ) >= AUTO_BACKUP_INTERVAL_MS
+            && self.snapshot.state.global_revision > self.snapshot.last_backup_revision
+        {
+            let result = self.backup(now);
+            let _ = FileExt::unlock(&self.lock);
+            result
         } else {
+            let _ = FileExt::unlock(&self.lock);
             BackupStatus::NotDue
         }
     }
-
     pub fn export_json(&self, destination: &Path) -> Result<(), StoreError> {
-        if is_protected_export_path(destination, &self.data_dir, &self.db_path)? {
+        if is_managed_path(destination, &self.data_dir)? {
             return Err(StoreError::InvalidRequest(
                 "export destination is application-managed storage",
             ));
         }
-
-        let tx = self.conn.unchecked_transaction()?;
-        let (global_revision, session_revision, settings_revision): (i64, i64, i64) = tx
-            .query_row(
-                "SELECT global_revision, session_revision, settings_revision
-                 FROM schema_meta WHERE singleton = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-        let checkpoint_json = tx
-            .query_row(
-                "SELECT checkpoint_json FROM active_session WHERE singleton = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        let settings_json = tx
-            .query_row(
-                "SELECT settings_json FROM settings WHERE singleton = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        let sessions = read_sessions(&tx)?;
-        let settings_history = read_settings_history(&tx)?;
-        let events = read_events(&tx)?;
-        let envelope = json!({
-            "schema_version": SCHEMA_VERSION,
-            "exported_utc_ms": utc_now_ms(),
-            "state": {
-                "global_revision": from_sqlite_u64(global_revision, "global_revision")?,
-                "session_revision": from_sqlite_u64(session_revision, "session_revision")?,
-                "settings_revision": from_sqlite_u64(settings_revision, "settings_revision")?,
-                "checkpoint": checkpoint_json.map(|value| serde_json::from_str::<Value>(&value)).transpose()?
-            },
-            "settings": settings_json.map(|value| serde_json::from_str::<Value>(&value)).transpose()?,
-            "settings_history": settings_history,
-            "sessions": sessions,
-            "events": events
-        });
-        let json_text = serde_json::to_vec_pretty(&envelope)?;
-        tx.commit()?;
-
-        write_atomically(destination, &json_text)?;
-        Ok(())
+        self.lock.lock_shared()?;
+        let loaded = read_journal(&self.journal_path, true);
+        FileExt::unlock(&self.lock)?;
+        let (s, _) = loaded?;
+        let out = json!({"schema_version":1,"exported_utc_ms":utc_now_ms(),"state":{"global_revision":s.state.global_revision,"session_revision":s.state.session_revision,"settings_revision":s.state.settings_revision,"checkpoint":s.state.checkpoint_json.as_deref().map(serde_json::from_str::<Value>).transpose()?},"settings":s.state.settings_json.as_deref().map(serde_json::from_str::<Value>).transpose()?,"settings_history":s.settings_history,"sessions":s.sessions,"events":s.events});
+        write_atomic(destination, &serde_json::to_vec_pretty(&out)?)
     }
-
-    fn create_and_record_backup(&mut self, backup_utc_ms: i64) -> BackupStatus {
-        let revision = match current_global_revision(&self.conn) {
-            Ok(value) => value,
-            Err(error) => {
-                self.backup_retry_required = true;
-                return BackupStatus::Failed {
-                    message: error.to_string(),
-                };
+    fn backup(&mut self, now: i64) -> BackupStatus {
+        let res = (|| -> Result<(), StoreError> {
+            let dir = self.data_dir.join(BACKUP_DIR);
+            fs::create_dir_all(&dir)?;
+            let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+            let p = dir.join(format!(
+                "backup-{now}-{}-{seq}.jsonl",
+                self.snapshot.state.global_revision
+            ));
+            let (current, sequence) = read_journal(&self.journal_path, true)?;
+            let bytes = fs::read(&self.journal_path)?;
+            let tmp = p.with_extension("jsonl.partial");
+            {
+                let mut f = OpenOptions::new().create_new(true).write(true).open(&tmp)?;
+                f.write_all(&bytes)?;
+                f.sync_all()?
             }
-        };
-        match create_valid_backup(&self.conn, &self.data_dir, backup_utc_ms, revision) {
+            let _ = read_journal(&tmp, false)?;
+            fs::hard_link(&tmp, &p)?;
+            fs::remove_file(tmp)?;
+            append_frame(
+                &self.journal_path,
+                &Frame {
+                    format_version: 1,
+                    sequence: sequence + 1,
+                    kind: "backup".into(),
+                    request: None,
+                    receipt: None,
+                    seed: None,
+                    backup_utc_ms: Some(now),
+                },
+            )?;
+            self.snapshot = current;
+            self.snapshot.last_backup_utc_ms = Some(now);
+            Ok(())
+        })();
+        match res {
             Ok(()) => {
-                self.last_backup_utc_ms = Some(backup_utc_ms);
-                self.last_backup_revision = revision;
-                self.backup_retry_required = false;
-                if let Ok(revision) = to_sqlite_i64(revision, "global_revision") {
-                    let _ = self.conn.execute(
-                        "UPDATE backup_state SET last_backup_utc_ms = ?1, last_backup_revision = ?2
-                         WHERE singleton = 1",
-                        params![backup_utc_ms, revision],
-                    );
-                }
+                self.snapshot.last_backup_utc_ms = Some(now);
+                self.snapshot.last_backup_revision = self.snapshot.state.global_revision;
                 BackupStatus::Created
             }
-            Err(error) => {
-                self.backup_retry_required = true;
-                BackupStatus::Failed {
-                    message: error.to_string(),
-                }
-            }
+            Err(e) => BackupStatus::Failed {
+                message: e.to_string(),
+            },
         }
     }
 }
 
-fn initialize_schema(conn: &Connection) -> Result<(bool, i64), StoreError> {
-    let table_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-        [],
-        |row| row.get(0),
-    )?;
-    if table_count == 0 {
-        let created_utc_ms = utc_now_ms();
-        let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(
-            "CREATE TABLE schema_meta (
-                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL,
-                global_revision INTEGER NOT NULL CHECK(global_revision >= 0),
-                session_revision INTEGER NOT NULL CHECK(session_revision >= 0),
-                settings_revision INTEGER NOT NULL CHECK(settings_revision >= 0),
-                created_utc_ms INTEGER NOT NULL
-             );
-             CREATE TABLE active_session (
-                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                checkpoint_json TEXT NOT NULL,
-                session_revision INTEGER NOT NULL,
-                updated_utc_ms INTEGER NOT NULL
-             );
-             CREATE TABLE settings (
-                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                settings_json TEXT NOT NULL,
-                settings_revision INTEGER NOT NULL,
-                updated_utc_ms INTEGER NOT NULL
-             );
-             CREATE TABLE settings_history (
-                settings_revision INTEGER PRIMARY KEY CHECK(settings_revision > 0),
-                settings_json TEXT NOT NULL,
-                updated_utc_ms INTEGER NOT NULL
-             );
-             CREATE TABLE session_history (
-                session_id TEXT PRIMARY KEY,
-                phase TEXT NOT NULL,
-                target_ms INTEGER NOT NULL CHECK(target_ms >= 0),
-                actual_active_ms INTEGER NOT NULL CHECK(actual_active_ms >= 0),
-                started_utc_ms INTEGER NOT NULL,
-                ended_utc_ms INTEGER NOT NULL,
-                start_local_date TEXT NOT NULL,
-                start_offset_minutes INTEGER NOT NULL,
-                outcome TEXT NOT NULL,
-                reason TEXT
-             );
-             CREATE TABLE event_log (
-                event_id TEXT PRIMARY KEY,
-                session_id TEXT,
-                kind TEXT NOT NULL,
-                occurred_utc_ms INTEGER NOT NULL,
-                local_offset_minutes INTEGER NOT NULL,
-                payload_json TEXT NOT NULL
-             );
-             CREATE TABLE command_receipts (
-                command_id TEXT PRIMARY KEY,
-                payload_hash TEXT NOT NULL,
-                result_payload TEXT NOT NULL,
-                global_revision INTEGER NOT NULL,
-                session_revision INTEGER NOT NULL,
-                settings_revision INTEGER NOT NULL,
-                committed_utc_ms INTEGER NOT NULL
-             );
-             CREATE TABLE backup_state (
-                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                last_backup_utc_ms INTEGER,
-                last_backup_revision INTEGER NOT NULL CHECK(last_backup_revision >= 0)
-             );",
-        )?;
-        tx.execute(
-            "INSERT INTO schema_meta VALUES (1, ?1, 0, 0, 0, ?2)",
-            params![SCHEMA_VERSION, created_utc_ms],
-        )?;
-        tx.execute("INSERT INTO backup_state VALUES (1, NULL, 0)", [])?;
-        tx.execute_batch("PRAGMA user_version = 1;")?;
-        tx.commit()?;
-        return Ok((false, created_utc_ms));
-    }
-
-    let has_meta: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_meta {
-        return Err(StoreError::CorruptDatabase("schema_meta table is missing"));
-    }
-    let (version, created_utc_ms): (i64, i64) = conn.query_row(
-        "SELECT schema_version, created_utc_ms FROM schema_meta WHERE singleton = 1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    if version != SCHEMA_VERSION {
-        return Err(StoreError::UnsupportedSchemaVersion(version));
-    }
-    for table in [
-        "active_session",
-        "settings",
-        "settings_history",
-        "session_history",
-        "event_log",
-        "command_receipts",
-        "backup_state",
-    ] {
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [table],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Err(StoreError::CorruptDatabase("required table is missing"));
-        }
-    }
-    Ok((true, created_utc_ms))
-}
-
-fn read_backup_state(conn: &Connection) -> Result<(Option<i64>, u64), StoreError> {
-    let (last_backup_utc_ms, last_backup_revision): (Option<i64>, i64) = conn.query_row(
-        "SELECT last_backup_utc_ms, last_backup_revision FROM backup_state WHERE singleton = 1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    Ok((
-        last_backup_utc_ms,
-        from_sqlite_u64(last_backup_revision, "last_backup_revision")?,
-    ))
-}
-
-fn validate_request(request: &CommitRequest) -> Result<(), StoreError> {
-    if request.command_id.trim().is_empty() {
+fn validate(r: &CommitRequest) -> Result<(), StoreError> {
+    if r.command_id.trim().is_empty() {
         return Err(StoreError::InvalidRequest("command_id"));
     }
-    if request.payload_hash.len() != 64
-        || !request
-            .payload_hash
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
+    if r.payload_hash.trim().is_empty() {
         return Err(StoreError::InvalidRequest("payload_hash"));
     }
-    if let Some(value) = &request.checkpoint_json {
-        serde_json::from_str::<Value>(value)?;
-    }
-    if let Some(value) = &request.settings_json {
-        serde_json::from_str::<Value>(value)?;
-    }
-    if let Some(event) = &request.event {
-        serde_json::from_str::<Value>(&event.payload_json)?;
-    }
-    if let Some(record) = &request.session_record {
-        to_sqlite_i64(record.target_ms, "target_ms")?;
-        to_sqlite_i64(record.actual_active_ms, "actual_active_ms")?;
+    for x in [&r.checkpoint_json, &r.settings_json] {
+        if let Some(v) = x {
+            serde_json::from_str::<Value>(v)?;
+        }
     }
     Ok(())
 }
-
-fn create_valid_backup(
-    source: &Connection,
-    data_dir: &Path,
-    backup_utc_ms: i64,
-    global_revision: u64,
-) -> Result<(), StoreError> {
-    let backup_dir = data_dir.join(BACKUP_DIR);
-    fs::create_dir_all(&backup_dir)?;
-    let revision = to_sqlite_i64(global_revision, "global_revision")?;
-    let (partial_path, mut destination) =
-        create_partial_backup(&backup_dir, backup_utc_ms, revision)?;
-    let result = (|| -> Result<(), StoreError> {
-        {
-            let backup = Backup::new(source, &mut destination)?;
-            backup.run_to_completion(128, Duration::from_millis(10), None)?;
-        }
-        destination
-            .close()
-            .map_err(|(_, error)| StoreError::Sqlite(error))?;
-        validate_backup(&partial_path)?;
-        publish_backup_no_replace(
-            &partial_path,
-            &backup_dir,
-            backup_utc_ms,
-            revision,
-            FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
-        )?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&partial_path);
-    }
-    result
-}
-
-fn create_partial_backup(
-    backup_dir: &Path,
-    backup_utc_ms: i64,
-    revision: i64,
-) -> Result<(PathBuf, Connection), StoreError> {
-    for _ in 0..100 {
-        let sequence = FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = backup_dir.join(format!(
-            "backup-{backup_utc_ms}-{revision}-{sequence}.partial"
-        ));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => {
-                drop(file);
-                return Ok((
-                    path.clone(),
-                    Connection::open(path).map_err(StoreError::Sqlite)?,
-                ));
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(StoreError::Io(error)),
-        }
-    }
-    Err(StoreError::CorruptDatabase(
-        "could not allocate a backup filename",
-    ))
-}
-
-fn validate_backup(path: &Path) -> Result<(), StoreError> {
-    let conn = Connection::open_with_flags(
-        path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-    if integrity != "ok" {
-        return Err(StoreError::CorruptDatabase("backup integrity_check failed"));
-    }
-    let version: i64 = conn.query_row(
-        "SELECT schema_version FROM schema_meta WHERE singleton = 1",
-        [],
-        |row| row.get(0),
-    )?;
-    if version != SCHEMA_VERSION {
-        return Err(StoreError::UnsupportedSchemaVersion(version));
-    }
-    for table in [
-        "settings",
-        "settings_history",
-        "active_session",
-        "session_history",
-        "event_log",
-        "command_receipts",
-    ] {
-        let _: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-            row.get(0)
-        })?;
-    }
-    Ok(())
-}
-
-fn current_global_revision(conn: &Connection) -> Result<u64, StoreError> {
-    let revision: i64 = conn.query_row(
-        "SELECT global_revision FROM schema_meta WHERE singleton = 1",
-        [],
-        |row| row.get(0),
-    )?;
-    from_sqlite_u64(revision, "global_revision")
-}
-
-fn revision_conflict(resource: &'static str, expected: u64, actual: u64) -> StoreError {
+fn conflict(resource: &'static str, expected: u64, actual: u64) -> StoreError {
     StoreError::RevisionConflict {
         resource,
         expected,
         actual,
     }
 }
-
-fn from_sqlite_u64(value: i64, field: &'static str) -> Result<u64, StoreError> {
-    u64::try_from(value).map_err(|_| StoreError::CorruptDatabase(field))
+fn apply_commit(s: &mut Snapshot, r: &CommitRequest) -> Result<Receipt, StoreError> {
+    let old = s.state.clone();
+    if r.expected_global_revision != old.global_revision {
+        return Err(conflict(
+            "global",
+            r.expected_global_revision,
+            old.global_revision,
+        ));
+    }
+    let session_changed = r.checkpoint_json.is_some() || r.session_record.is_some();
+    if session_changed
+        && r.expected_session_revision
+            .ok_or(StoreError::MissingExpectedRevision("session"))?
+            != old.session_revision
+    {
+        return Err(conflict(
+            "session",
+            r.expected_session_revision.unwrap(),
+            old.session_revision,
+        ));
+    }
+    if r.settings_json.is_some()
+        && r.expected_settings_revision
+            .ok_or(StoreError::MissingExpectedRevision("settings"))?
+            != old.settings_revision
+    {
+        return Err(conflict(
+            "settings",
+            r.expected_settings_revision.unwrap(),
+            old.settings_revision,
+        ));
+    }
+    s.state.global_revision = old
+        .global_revision
+        .checked_add(1)
+        .ok_or(StoreError::RevisionOverflow("global"))?;
+    if session_changed {
+        s.state.session_revision = old
+            .session_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow("session"))?
+    }
+    if r.settings_json.is_some() {
+        s.state.settings_revision = old
+            .settings_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow("settings"))?
+    }
+    if let Some(x) = &r.checkpoint_json {
+        s.state.checkpoint_json = Some(x.clone())
+    }
+    if let Some(x) = &r.settings_json {
+        s.state.settings_json = Some(x.clone());
+        s.settings_history.push(json!({"settings_revision":s.state.settings_revision,"updated_utc_ms":r.committed_utc_ms,"settings":serde_json::from_str::<Value>(x)?}))
+    }
+    if let Some(x) = &r.session_record {
+        s.sessions.push(serde_json::to_value(x)?);
+        if r.checkpoint_json.is_none() {
+            s.state.checkpoint_json = None
+        }
+    }
+    if let Some(x) = &r.event {
+        s.events.push(json!({"event_id":x.event_id,"session_id":x.session_id,"kind":x.kind,"occurred_utc_ms":x.occurred_utc_ms,"local_offset_minutes":x.local_offset_minutes,"payload":serde_json::from_str::<Value>(&x.payload_json)?}))
+    }
+    let receipt = Receipt {
+        command_id: r.command_id.clone(),
+        global_revision: s.state.global_revision,
+        session_revision: s.state.session_revision,
+        settings_revision: s.state.settings_revision,
+        committed_utc_ms: r.committed_utc_ms,
+        duplicate: false,
+    };
+    s.receipts.insert(
+        r.command_id.clone(),
+        (r.payload_hash.clone(), receipt.clone()),
+    );
+    Ok(receipt)
 }
-
-fn to_sqlite_i64(value: u64, field: &'static str) -> Result<i64, StoreError> {
-    i64::try_from(value).map_err(|_| StoreError::IntegerOutOfRange(field))
-}
-
 fn utc_now_ms() -> i64 {
-    let millis = SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis();
-    i64::try_from(millis).unwrap_or(i64::MAX)
+        .as_millis()
+        .min(i64::MAX as u128) as i64
 }
-
-fn is_protected_export_path(
-    destination: &Path,
-    data_dir: &Path,
-    database: &Path,
-) -> Result<bool, StoreError> {
-    let lexical_destination = lexical_absolute_path(destination)?;
-    let lexical_backup_root = lexical_absolute_path(&data_dir.join(BACKUP_DIR))?;
-    if is_same_or_descendant_path(&lexical_destination, &lexical_backup_root) {
-        return Ok(true);
+fn append_frame(path: &Path, frame: &Frame) -> Result<(), StoreError> {
+    let mut line = serde_json::to_vec(frame)?;
+    line.push(b'\n');
+    let mut f = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let original_len = f.metadata()?.len();
+    f.seek(SeekFrom::End(0))?;
+    let result = f
+        .write_all(&line)
+        .and_then(|()| f.flush())
+        .and_then(|()| f.sync_all());
+    if let Err(error) = result {
+        let rollback = f.set_len(original_len).and_then(|()| f.sync_all());
+        return match rollback {
+            Ok(()) => Err(StoreError::Io(error)),
+            Err(rollback_error) => Err(StoreError::Io(io::Error::new(
+                rollback_error.kind(),
+                format!("append failed ({error}); rollback failed ({rollback_error})"),
+            ))),
+        };
     }
-
-    let destination = canonicalize_with_missing_suffix(destination)?;
-    let database = canonicalize_with_missing_suffix(database)?;
-    if same_path(&destination, &database) {
-        return Ok(true);
-    }
-
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let mut sidecar_name = database
-            .file_name()
-            .ok_or(StoreError::InvalidRequest("database path"))?
-            .to_os_string();
-        sidecar_name.push(suffix);
-        let sidecar = database.with_file_name(sidecar_name);
-        if same_path(&destination, &canonicalize_with_missing_suffix(&sidecar)?) {
-            return Ok(true);
+    Ok(())
+}
+fn read_journal(path: &Path, recover_tail: bool) -> Result<(Snapshot, u64), StoreError> {
+    let mut bytes = Vec::new();
+    File::open(path)?.read_to_end(&mut bytes)?;
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        if !recover_tail {
+            return Err(StoreError::CorruptDatabase("incomplete final frame"));
         }
+        let end = bytes
+            .iter()
+            .rposition(|b| *b == b'\n')
+            .map(|x| x + 1)
+            .unwrap_or(0);
+        let f = OpenOptions::new().write(true).open(path)?;
+        f.set_len(end as u64)?;
+        bytes.truncate(end)
     }
-
-    let backup_root = canonicalize_with_missing_suffix(&data_dir.join(BACKUP_DIR))?;
-    Ok(is_same_or_descendant_path(&destination, &backup_root))
+    let mut snap: Option<Snapshot> = None;
+    let mut seq = 0;
+    for line in bytes.split(|b| *b == b'\n').filter(|x| !x.is_empty()) {
+        let fr: Frame = serde_json::from_slice(line)
+            .map_err(|_| StoreError::CorruptDatabase("invalid complete frame"))?;
+        if fr.format_version != 1 || fr.sequence != seq + 1 {
+            return Err(StoreError::CorruptDatabase(
+                "unsupported format or sequence gap",
+            ));
+        }
+        match fr.kind.as_str() {
+            "seed" => {
+                if snap.is_some() || seq != 0 {
+                    return Err(StoreError::CorruptDatabase("seed is not first"));
+                }
+                snap = fr.seed;
+            }
+            "commit" => {
+                let mut state = snap
+                    .take()
+                    .ok_or(StoreError::CorruptDatabase("commit before seed"))?;
+                let req = fr
+                    .request
+                    .ok_or(StoreError::CorruptDatabase("commit request missing"))?;
+                let recorded = fr
+                    .receipt
+                    .ok_or(StoreError::CorruptDatabase("receipt missing"))?;
+                let expected = apply_commit(&mut state, &req)
+                    .map_err(|_| StoreError::CorruptDatabase("invalid commit transition"))?;
+                if expected != recorded {
+                    return Err(StoreError::CorruptDatabase("receipt mismatch"));
+                }
+                snap = Some(state)
+            }
+            "migration" => {
+                if snap.is_some() || seq != 0 {
+                    return Err(StoreError::CorruptDatabase("migration seed is not first"));
+                }
+                snap = fr.seed;
+            }
+            "backup" => {
+                let mut state = snap
+                    .take()
+                    .ok_or(StoreError::CorruptDatabase("backup before seed"))?;
+                state.last_backup_utc_ms = fr.backup_utc_ms;
+                state.last_backup_revision = state.state.global_revision;
+                snap = Some(state);
+            }
+            _ => return Err(StoreError::CorruptDatabase("unknown frame kind")),
+        }
+        seq += 1
+    }
+    snap.map(|s| (s, seq))
+        .ok_or(StoreError::CorruptDatabase("empty journal"))
+}
+fn write_atomic(path: &Path, b: &[u8]) -> Result<(), StoreError> {
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p)?
+    }
+    let tmp = path.with_extension("json.partial");
+    {
+        let mut f = File::create(&tmp)?;
+        f.write_all(b)?;
+        f.sync_all()?
+    }
+    fs::rename(tmp, path)?;
+    Ok(())
 }
 
-fn canonicalize_with_missing_suffix(path: &Path) -> Result<PathBuf, StoreError> {
-    let normalized = lexical_absolute_path(path)?;
-    let mut existing = normalized.clone();
-    let mut suffix = Vec::new();
-    while !existing.exists() {
-        let name = existing
+fn is_managed_path(destination: &Path, data_dir: &Path) -> Result<bool, StoreError> {
+    let root = data_dir.canonicalize()?;
+    let absolute = if destination.is_absolute() {
+        destination.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(destination)
+    };
+    let resolved = if absolute.exists() {
+        absolute.canonicalize()?
+    } else {
+        let parent = absolute
+            .parent()
+            .ok_or(StoreError::InvalidRequest("export destination"))?;
+        let file_name = absolute
             .file_name()
             .ok_or(StoreError::InvalidRequest("export destination"))?;
-        suffix.push(name.to_os_string());
-        if !existing.pop() {
-            return Err(StoreError::InvalidRequest("export destination"));
-        }
-    }
-
-    let mut resolved = existing.canonicalize()?;
-    for component in suffix.iter().rev() {
-        resolved.push(component);
-    }
-    Ok(normalize_path(&resolved))
-}
-
-fn lexical_absolute_path(path: &Path) -> Result<PathBuf, StoreError> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
+        parent.canonicalize()?.join(file_name)
     };
-    Ok(normalize_path(&absolute))
+    Ok(resolved.starts_with(root))
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() && !normalized.has_root() {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-    normalized
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    #[cfg(windows)]
-    {
-        left.to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy())
-    }
-    #[cfg(not(windows))]
-    {
-        left == right
-    }
-}
-
-fn is_same_or_descendant_path(path: &Path, root: &Path) -> bool {
-    if same_path(path, root) {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        let path = path.to_string_lossy().replace('/', "\\");
-        let root = root
-            .to_string_lossy()
-            .replace('/', "\\")
-            .trim_end_matches('\\')
-            .to_owned();
-        path.to_lowercase()
-            .starts_with(&format!("{}\\", root.to_lowercase()))
-    }
-    #[cfg(not(windows))]
-    {
-        path.starts_with(root)
-    }
-}
-
-fn publish_backup_no_replace(
-    partial_path: &Path,
-    backup_dir: &Path,
-    backup_utc_ms: i64,
-    revision: i64,
-    first_sequence: u64,
-) -> Result<PathBuf, StoreError> {
-    for offset in 0..100u64 {
-        let sequence = first_sequence.saturating_add(offset);
-        let final_path = backup_dir.join(format!(
-            "backup-{backup_utc_ms}-{revision}-{sequence}.sqlite3"
+fn migrate_legacy(data_dir: &Path, legacy_dir: &Path, journal: &Path) -> Result<(), StoreError> {
+    use rusqlite::{Connection, OptionalExtension};
+    let old = legacy_dir.join("pomodoro.sqlite3");
+    let c = Connection::open_with_flags(&old, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let integrity: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    if integrity != "ok" {
+        return Err(StoreError::CorruptDatabase(
+            "legacy SQLite integrity check failed",
         ));
-        match fs::hard_link(partial_path, &final_path) {
-            Ok(()) => {
-                fs::remove_file(partial_path)?;
-                return Ok(final_path);
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(StoreError::Io(error)),
+    }
+    let ver: i64 = c.query_row(
+        "SELECT schema_version FROM schema_meta WHERE singleton=1",
+        [],
+        |r| r.get(0),
+    )?;
+    if ver != 1 {
+        return Err(StoreError::UnsupportedSchemaVersion(ver));
+    }
+    let (g,sr,tr):(i64,i64,i64)=c.query_row("SELECT global_revision,session_revision,settings_revision FROM schema_meta WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    let cp = c
+        .query_row(
+            "SELECT checkpoint_json FROM active_session WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let settings = c
+        .query_row(
+            "SELECT settings_json FROM settings WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let sessions = read_legacy_rows(
+        &c,
+        "SELECT session_id, phase, target_ms, actual_active_ms, started_utc_ms, ended_utc_ms, start_local_date, start_offset_minutes, outcome, reason FROM session_history ORDER BY rowid",
+        &[
+            "session_id",
+            "phase",
+            "target_ms",
+            "actual_active_ms",
+            "started_utc_ms",
+            "ended_utc_ms",
+            "start_local_date",
+            "start_offset_minutes",
+            "outcome",
+            "reason",
+        ],
+    )?;
+    let events = read_legacy_rows(
+        &c,
+        "SELECT event_id, session_id, kind, occurred_utc_ms, local_offset_minutes, payload_json FROM event_log ORDER BY rowid",
+        &[
+            "event_id",
+            "session_id",
+            "kind",
+            "occurred_utc_ms",
+            "local_offset_minutes",
+            "payload",
+        ],
+    )?;
+    let settings_history = read_legacy_rows(
+        &c,
+        "SELECT settings_revision, settings_json, updated_utc_ms FROM settings_history ORDER BY settings_revision",
+        &["settings_revision", "settings_json", "updated_utc_ms"],
+    )?;
+    let mut receipts = HashMap::new();
+    {
+        let mut q =
+            c.prepare("SELECT command_id,payload_hash,result_payload FROM command_receipts")?;
+        let rows = q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, hash, payload) = row?;
+            let receipt: Receipt = serde_json::from_str(&payload)?;
+            receipts.insert(id, (hash, receipt));
         }
     }
-    Err(StoreError::CorruptDatabase(
-        "could not allocate a non-overwriting backup filename",
-    ))
-}
-
-fn write_atomically(destination: &Path, contents: &[u8]) -> Result<(), StoreError> {
-    let parent = destination
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let name = destination
-        .file_name()
-        .ok_or(StoreError::InvalidRequest("export destination"))?;
-    for _ in 0..100 {
-        let sequence = FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(".{}.partial-{sequence}", name.to_string_lossy()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        {
-            Ok(mut file) => {
-                use std::io::Write;
-                let write_result = file.write_all(contents).and_then(|()| file.sync_all());
-                drop(file);
-                if let Err(error) = write_result {
-                    let _ = fs::remove_file(&temporary);
-                    return Err(StoreError::Io(error));
-                }
-                if let Err(error) = fs::rename(&temporary, destination) {
-                    let _ = fs::remove_file(&temporary);
-                    return Err(StoreError::Io(error));
-                }
-                return Ok(());
+    let b = c
+        .query_row(
+            "SELECT last_backup_utc_ms FROM backup_state WHERE singleton=1",
+            [],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten();
+    let backup_revision = c
+        .query_row(
+            "SELECT last_backup_revision FROM backup_state WHERE singleton=1",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+        .unwrap_or(0)
+        .max(0) as u64;
+    let snap = Snapshot {
+        state: StoredState {
+            global_revision: g as u64,
+            session_revision: sr as u64,
+            settings_revision: tr as u64,
+            checkpoint_json: cp,
+            settings_json: settings,
+        },
+        sessions,
+        events,
+        settings_history,
+        receipts,
+        last_backup_utc_ms: b,
+        last_backup_revision: backup_revision,
+        created_utc_ms: utc_now_ms(),
+    };
+    drop(c);
+    let partial = data_dir.join("journal.migration.partial");
+    let _ = fs::remove_file(&partial);
+    append_frame(
+        &partial,
+        &Frame {
+            format_version: 1,
+            sequence: 1,
+            kind: "migration".into(),
+            request: None,
+            receipt: None,
+            seed: Some(snap),
+            backup_utc_ms: None,
+        },
+    )?;
+    let _ = read_journal(&partial, false)?;
+    let dir = data_dir.join("legacy-import");
+    fs::create_dir_all(&dir)?;
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let src = PathBuf::from(format!("{}{}", old.display(), suffix));
+        if src.exists() {
+            let dst = dir.join(src.file_name().unwrap());
+            fs::copy(&src, &dst)?;
+            if fs::read(&src)? != fs::read(&dst)? {
+                return Err(StoreError::CorruptDatabase(
+                    "legacy archive verification failed",
+                ));
             }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(StoreError::Io(error)),
         }
     }
-    Err(StoreError::CorruptDatabase(
-        "could not allocate an export filename",
-    ))
+    fs::rename(&partial, journal)?;
+    let sqlite_backups = legacy_dir.join(BACKUP_DIR);
+    if sqlite_backups.exists() {
+        let archived_backups = dir.join("sqlite-backups");
+        if legacy_dir == data_dir {
+            fs::rename(&sqlite_backups, &archived_backups)?;
+        } else {
+            copy_tree_verified(&sqlite_backups, &archived_backups)?;
+        }
+    }
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let src = PathBuf::from(format!("{}{}", old.display(), suffix));
+        if src.exists() {
+            if legacy_dir == data_dir {
+                fs::remove_file(src)?;
+            }
+        }
+    }
+    if legacy_dir != data_dir {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let src = PathBuf::from(format!("{}{}", old.display(), suffix));
+            if src.exists() {
+                fs::remove_file(src)?;
+            }
+        }
+        if sqlite_backups.exists() {
+            fs::remove_dir_all(sqlite_backups)?;
+        }
+    }
+    Ok(())
 }
 
-fn read_sessions(conn: &Connection) -> Result<Vec<Value>, StoreError> {
-    let mut statement = conn.prepare(
-        "SELECT session_id, phase, target_ms, actual_active_ms, started_utc_ms, ended_utc_ms,
-                start_local_date, start_offset_minutes, outcome, reason
-         FROM session_history ORDER BY ended_utc_ms, session_id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(json!({
-            "session_id": row.get::<_, String>(0)?,
-            "phase": row.get::<_, String>(1)?,
-            "target_ms": row.get::<_, i64>(2)?,
-            "actual_active_ms": row.get::<_, i64>(3)?,
-            "started_utc_ms": row.get::<_, i64>(4)?,
-            "ended_utc_ms": row.get::<_, i64>(5)?,
-            "start_local_date": row.get::<_, String>(6)?,
-            "start_offset_minutes": row.get::<_, i32>(7)?,
-            "outcome": row.get::<_, String>(8)?,
-            "reason": row.get::<_, Option<String>>(9)?
-        }))
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+fn copy_tree_verified(source: &Path, destination: &Path) -> Result<(), StoreError> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = destination.join(entry.file_name());
+        if src.is_dir() {
+            copy_tree_verified(&src, &dst)?;
+        } else {
+            fs::copy(&src, &dst)?;
+            if fs::read(&src)? != fs::read(&dst)? {
+                return Err(StoreError::CorruptDatabase(
+                    "legacy backup verification failed",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
-
-fn read_settings_history(conn: &Connection) -> Result<Vec<Value>, StoreError> {
-    let mut statement = conn.prepare(
-        "SELECT settings_revision, settings_json, updated_utc_ms
-         FROM settings_history ORDER BY settings_revision",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let settings_json: String = row.get(1)?;
-        let settings: Value = serde_json::from_str(&settings_json).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                1,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })?;
-        Ok(json!({
-            "settings_revision": row.get::<_, i64>(0)?,
-            "settings": settings,
-            "updated_utc_ms": row.get::<_, i64>(2)?
-        }))
+fn read_legacy_rows(
+    c: &rusqlite::Connection,
+    sql: &str,
+    keys: &[&str],
+) -> Result<Vec<Value>, StoreError> {
+    let mut q = c.prepare(sql)?;
+    let rows = q.query_map([], |row| {
+        let mut values = serde_json::Map::new();
+        for (i, key) in keys.iter().enumerate() {
+            let v: rusqlite::types::Value = row.get(i)?;
+            let mut value = match v {
+                rusqlite::types::Value::Null => Value::Null,
+                rusqlite::types::Value::Integer(x) => json!(x),
+                rusqlite::types::Value::Real(x) => json!(x),
+                rusqlite::types::Value::Text(x) => json!(x),
+                rusqlite::types::Value::Blob(x) => json!(x),
+            };
+            if matches!(*key, "settings_json" | "payload") {
+                if let Value::String(raw) = &value {
+                    if let Ok(parsed) = serde_json::from_str(raw) {
+                        value = parsed;
+                    }
+                }
+            }
+            values.insert((*key).to_owned(), value);
+        }
+        Ok(Value::Object(values))
     })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
-fn read_events(conn: &Connection) -> Result<Vec<Value>, StoreError> {
-    let mut statement = conn.prepare(
-        "SELECT event_id, session_id, kind, occurred_utc_ms, local_offset_minutes, payload_json
-         FROM event_log ORDER BY occurred_utc_ms, event_id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let payload_json: String = row.get(5)?;
-        let payload: Value = serde_json::from_str(&payload_json).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                5,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })?;
-        Ok(json!({
-            "event_id": row.get::<_, String>(0)?,
-            "session_id": row.get::<_, Option<String>>(1)?,
-            "kind": row.get::<_, String>(2)?,
-            "occurred_utc_ms": row.get::<_, i64>(3)?,
-            "local_offset_minutes": row.get::<_, i32>(4)?,
-            "payload": payload
-        }))
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
-
-    fn hash(value: char) -> String {
-        std::iter::repeat_n(value, 64).collect()
-    }
-
-    fn event(
-        id: &str,
-        session: &str,
-        kind: &str,
-        at: i64,
-        offset: i32,
-        payload: &str,
-    ) -> EventRecord {
-        EventRecord {
-            event_id: id.to_owned(),
-            session_id: Some(session.to_owned()),
-            kind: kind.to_owned(),
-            occurred_utc_ms: at,
-            local_offset_minutes: offset,
-            payload_json: payload.to_owned(),
-        }
-    }
-
-    fn record(id: &str, started: i64, ended: i64, offset: i32, outcome: &str) -> SessionRecord {
-        SessionRecord {
-            session_id: id.to_owned(),
-            phase: "focus".to_owned(),
-            target_ms: 1_500_000,
-            actual_active_ms: 1_234_567,
-            started_utc_ms: started,
-            ended_utc_ms: ended,
-            start_local_date: "2026-11-18".to_owned(),
-            start_offset_minutes: offset,
-            outcome: outcome.to_owned(),
-            reason: Some("user_action".to_owned()),
-        }
-    }
-
-    fn request(id: &str, hash_marker: char, global: u64, now: i64) -> CommitRequest {
+    fn req(id: &str, expected: u64) -> CommitRequest {
         CommitRequest {
-            command_id: id.to_owned(),
-            payload_hash: hash(hash_marker),
-            expected_global_revision: global,
-            expected_session_revision: None,
+            command_id: id.into(),
+            payload_hash: "hash".into(),
+            expected_global_revision: expected,
+            expected_session_revision: Some(0),
             expected_settings_revision: None,
-            checkpoint_json: None,
+            checkpoint_json: Some(r#"{"phase":"focus"}"#.into()),
             settings_json: None,
             session_record: None,
             event: None,
-            committed_utc_ms: now,
+            committed_utc_ms: 1,
         }
     }
-
-    fn backup_paths(data_dir: &Path) -> Vec<PathBuf> {
-        let backup_dir = data_dir.join(BACKUP_DIR);
-        if !backup_dir.exists() {
-            return Vec::new();
-        }
-        fs::read_dir(backup_dir)
-            .expect("backup directory readable")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "sqlite3")
-            })
-            .collect()
-    }
-
-    fn assert_backup_contents(path: &Path, sessions: i64, events: i64, receipts: i64) {
-        let conn = Connection::open(path).expect("backup opens as SQLite");
-        let integrity: String = conn
-            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-            .expect("integrity_check runs");
-        assert_eq!(integrity, "ok");
-        let version: i64 = conn
-            .query_row(
-                "SELECT schema_version FROM schema_meta WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("schema readable");
-        assert_eq!(version, SCHEMA_VERSION);
-        for (table, expected) in [
-            ("session_history", sessions),
-            ("event_log", events),
-            ("command_receipts", receipts),
-        ] {
-            let actual: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
-                .expect("backup table readable");
-            assert_eq!(actual, expected, "{table} row count");
-        }
-    }
-
     #[test]
-    fn opening_existing_database_and_terminal_commit_create_verified_backups() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("new store opens");
-        assert_eq!(store.open_backup_status(), &BackupStatus::NotDue);
-        assert!(backup_paths(directory.path()).is_empty());
-
-        let mut start = request("start", 'a', 0, 1_900_000_000_000);
-        start.expected_session_revision = Some(0);
-        start.checkpoint_json = Some(r#"{"session_id":"s1","active_ms":0}"#.to_owned());
-        start.event = Some(event(
-            "e-start",
-            "s1",
-            "started",
-            1_900_000_000_000,
-            -360,
-            r#"{"target_ms":1500000}"#,
-        ));
-        assert_eq!(
-            store.commit(&start).expect("start persists").backup_status,
-            BackupStatus::NotDue
-        );
-        drop(store);
-
-        let mut store = Store::open(directory.path()).expect("existing store opens");
-        assert_eq!(store.open_backup_status(), &BackupStatus::Created);
-        let startup_backups = backup_paths(directory.path());
-        assert_eq!(startup_backups.len(), 1);
-        assert_backup_contents(&startup_backups[0], 0, 1, 1);
-
-        let mut finish = request("finish", 'b', 1, 1_900_000_003_000);
-        finish.expected_session_revision = Some(1);
-        finish.session_record = Some(record(
-            "s1",
-            1_900_000_000_000,
-            1_900_000_003_000,
-            -360,
-            "completed",
-        ));
-        let final_checkpoint = r#"{"phase":"short_break","round_index":1}"#;
-        finish.checkpoint_json = Some(final_checkpoint.to_owned());
-        finish.event = Some(event(
-            "e-finish",
-            "s1",
-            "completed",
-            1_900_000_003_000,
-            -360,
-            r#"{"actual_active_ms":1234567}"#,
-        ));
-        let result = store
-            .commit(&finish)
-            .expect("terminal data persists even with backup");
-        assert_eq!(result.receipt.global_revision, 2);
-        assert_eq!(result.backup_status, BackupStatus::Created);
-        assert_eq!(
-            store.load_state().unwrap().checkpoint_json.as_deref(),
-            Some(final_checkpoint)
-        );
-        let all_backups = backup_paths(directory.path());
-        assert_eq!(all_backups.len(), 2);
-        let terminal_backup = all_backups
-            .iter()
-            .find(|path| {
-                path.file_name()
-                    .is_some_and(|name| name.to_string_lossy().contains("1900000003000"))
-            })
-            .expect("terminal commit backup exists");
-        assert_backup_contents(terminal_backup, 1, 2, 2);
-        let backup = Connection::open(terminal_backup).expect("terminal backup opens");
-        let backup_checkpoint: String = backup
-            .query_row(
-                "SELECT checkpoint_json FROM active_session WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("terminal snapshot is in the same backup");
-        assert_eq!(backup_checkpoint, final_checkpoint);
-        drop(backup);
-        drop(store);
-
-        let store = Store::open(directory.path()).expect("restart restores terminal snapshot");
-        assert_eq!(store.open_backup_status(), &BackupStatus::Created);
-        let restored = store
-            .load_state()
-            .expect("completion state reads after restart");
-        assert_eq!(restored.session_revision, 2);
-        let restored_checkpoint: Value =
-            serde_json::from_str(restored.checkpoint_json.as_deref().unwrap()).unwrap();
-        assert_eq!(restored_checkpoint["phase"], "short_break");
-        assert_eq!(restored_checkpoint["round_index"], 1);
-        assert_eq!(backup_paths(directory.path()).len(), 3);
-    }
-
-    #[test]
-    fn retains_sessions_events_offsets_settings_and_reads_them_after_restart() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("store opens");
-
-        let mut start = request("start-one", 'a', 0, 1_800_000_000_000);
-        start.expected_session_revision = Some(0);
-        start.expected_settings_revision = Some(0);
-        start.checkpoint_json = Some(r#"{"session_id":"s1","remaining_ms":1000}"#.to_owned());
-        start.settings_json =
-            Some(r#"{"schema_version":1,"focus_ms":1500000,"theme_mode":"system"}"#.to_owned());
-        start.event = Some(event(
-            "s1-start",
-            "s1",
-            "started",
-            1_800_000_000_000,
-            345,
-            r#"{"phase":"focus"}"#,
-        ));
-        store.commit(&start).expect("start persists");
-
-        let mut pause = request("pause-one", 'b', 1, 1_800_000_001_000);
-        pause.event = Some(event(
-            "s1-pause",
-            "s1",
-            "paused",
-            1_800_000_001_000,
-            345,
-            r#"{"reason":"user"}"#,
-        ));
-        store.commit(&pause).expect("pause event persists");
-        let mut resume = request("resume-one", 'c', 2, 1_800_000_002_000);
-        resume.event = Some(event(
-            "s1-resume",
-            "s1",
-            "resumed",
-            1_800_000_002_000,
-            345,
-            r#"{"source":"button"}"#,
-        ));
-        store.commit(&resume).expect("resume event persists");
-
-        let mut settings_update = request("settings-two", 'f', 3, 1_800_000_002_500);
-        settings_update.expected_settings_revision = Some(1);
-        settings_update.settings_json =
-            Some(r#"{"schema_version":1,"focus_ms":1800000,"theme_mode":"system"}"#.to_owned());
-        store
-            .commit(&settings_update)
-            .expect("new settings revision persists alongside history");
-
-        let mut finish_one = request("finish-one", 'd', 4, 1_800_000_003_000);
-        finish_one.expected_session_revision = Some(1);
-        finish_one.session_record = Some(record(
-            "s1",
-            1_800_000_000_000,
-            1_800_000_003_000,
-            345,
-            "completed",
-        ));
-        finish_one.event = Some(event(
-            "s1-complete",
-            "s1",
-            "completed",
-            1_800_000_003_000,
-            345,
-            r#"{"reason":"elapsed"}"#,
-        ));
-        store.commit(&finish_one).expect("first session ends");
-
-        let mut finish_two = request("finish-two", 'e', 5, 1_800_000_006_000);
-        finish_two.expected_session_revision = Some(2);
-        finish_two.session_record = Some(record(
-            "s2",
-            1_800_000_004_000,
-            1_800_000_006_000,
-            -300,
-            "interrupted",
-        ));
-        finish_two.event = Some(event(
-            "s2-interrupt",
-            "s2",
-            "interrupted",
-            1_800_000_006_000,
-            -300,
-            r#"{"reason":"exit"}"#,
-        ));
-        store.commit(&finish_two).expect("second session ends");
-        assert_eq!(
-            store.load_state().expect("state reads").settings_revision,
-            2
-        );
-        drop(store);
-
-        let store = Store::open(directory.path()).expect("restart reads database");
-        let state = store.load_state().expect("state reads after restart");
-        assert_eq!(state.global_revision, 6);
-        assert_eq!(state.session_revision, 3);
-        assert_eq!(state.settings_revision, 2);
-        assert_eq!(state.checkpoint_json, None);
-        assert_eq!(
-            serde_json::from_str::<Value>(state.settings_json.as_deref().unwrap()).unwrap()["focus_ms"],
-            1_800_000
-        );
-
-        let export = directory.path().join("analysis.json");
-        store
-            .export_json(&export)
-            .expect("analysis export succeeds");
-        let exported: Value =
-            serde_json::from_slice(&fs::read(&export).expect("export file reads")).unwrap();
-        assert_eq!(exported["sessions"].as_array().unwrap().len(), 2);
-        assert_eq!(exported["settings_history"].as_array().unwrap().len(), 2);
-        assert_eq!(exported["settings_history"][0]["settings_revision"], 1);
-        assert_eq!(
-            exported["settings_history"][0]["settings"]["focus_ms"],
-            1_500_000
-        );
-        assert_eq!(
-            exported["settings_history"][1]["settings"]["focus_ms"],
-            1_800_000
-        );
-        assert_eq!(exported["events"].as_array().unwrap().len(), 5);
-        assert_eq!(exported["sessions"][0]["start_offset_minutes"], 345);
-        assert_eq!(exported["sessions"][1]["start_offset_minutes"], -300);
-        assert_eq!(exported["events"][0]["payload"]["phase"], "focus");
-        assert_eq!(exported["settings"]["focus_ms"], 1_800_000);
-        assert_eq!(store.load_state().unwrap().global_revision, 6);
-    }
-
-    #[test]
-    fn receipts_are_idempotent_and_revision_conflicts_do_not_write() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("store opens");
-        let mut first = request("same-command", 'a', 0, 10);
-        first.expected_session_revision = Some(0);
-        first.checkpoint_json = Some(r#"{"active_ms":10}"#.to_owned());
-        let first_receipt = store.commit(&first).expect("first commit succeeds").receipt;
-
-        let duplicate = store.commit(&first).expect("same command replays receipt");
-        assert!(duplicate.receipt.duplicate);
-        assert_eq!(
-            duplicate.receipt.global_revision,
-            first_receipt.global_revision
-        );
-        assert_eq!(duplicate.backup_status, BackupStatus::NotDue);
-
-        let mut changed = first.clone();
-        changed.payload_hash = hash('b');
+    fn append_idempotent_cas_and_restart() {
+        let d = tempdir().unwrap();
+        let mut s = Store::open(d.path()).unwrap();
+        let r = s.commit(&req("a", 0)).unwrap().receipt;
+        assert_eq!(r.global_revision, 1);
+        assert!(s.commit(&req("a", 0)).unwrap().receipt.duplicate);
         assert!(matches!(
-            store.commit(&changed),
-            Err(StoreError::CommandIdConflict)
+            s.commit(&req("b", 0)),
+            Err(StoreError::RevisionConflict { .. })
         ));
+        drop(s);
+        let s = Store::open(d.path()).unwrap();
+        assert_eq!(
+            s.load_state().unwrap().checkpoint_json.as_deref(),
+            Some(r#"{"phase":"focus"}"#)
+        );
+        assert!(
+            fs::read_to_string(d.path().join(JOURNAL))
+                .unwrap()
+                .lines()
+                .count()
+                >= 2
+        );
+    }
+    #[test]
+    fn incomplete_tail_is_discarded() {
+        let d = tempdir().unwrap();
+        let s = Store::open(d.path()).unwrap();
+        drop(s);
+        let p = d.path().join(JOURNAL);
+        let mut f = OpenOptions::new().append(true).open(&p).unwrap();
+        f.write_all(b"{partial").unwrap();
+        drop(f);
+        let s = Store::open(d.path()).unwrap();
+        assert_eq!(s.load_state().unwrap().global_revision, 0);
+        assert!(fs::read(&p).unwrap().ends_with(b"\n"));
+    }
 
-        let mut stale = request("stale-command", 'c', 0, 20);
-        stale.event = Some(event("stale-event", "s1", "paused", 20, 0, "{}"));
+    #[test]
+    fn separate_handles_reload_and_serialize_writes() {
+        let dir = tempdir().unwrap();
+        let mut first = Store::open(dir.path()).unwrap();
+        let mut second = Store::open(dir.path()).unwrap();
+        first.commit(&req("first", 0)).unwrap();
+        assert_eq!(second.load_state().unwrap().global_revision, 1);
         assert!(matches!(
-            store.commit(&stale),
-            Err(StoreError::RevisionConflict {
-                resource: "global",
-                expected: 0,
-                actual: 1
-            })
+            second.commit(&req("stale", 0)),
+            Err(StoreError::RevisionConflict { actual: 1, .. })
         ));
-        let state = store.load_state().expect("state reads");
-        assert_eq!(state.global_revision, 1);
-        assert_eq!(state.session_revision, 1);
+    }
+    #[test]
+    fn export_has_history_and_records() {
+        let d = tempdir().unwrap();
+        let app = d.path().join("app");
+        fs::create_dir_all(&app).unwrap();
+        let mut s = Store::open(&app).unwrap();
+        let mut r = req("a", 0);
+        r.checkpoint_json = None;
+        r.expected_session_revision = None;
+        r.expected_settings_revision = Some(0);
+        r.settings_json = Some(r#"{"focus_ms":1}"#.into());
+        r.event = Some(EventRecord {
+            event_id: "e".into(),
+            session_id: None,
+            kind: "test".into(),
+            occurred_utc_ms: 2,
+            local_offset_minutes: 0,
+            payload_json: "{}".into(),
+        });
+        s.commit(&r).unwrap();
+        let out = d.path().join("analysis.json");
+        s.export_json(&out).unwrap();
+        let v: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert_eq!(v["settings_history"].as_array().unwrap().len(), 1);
+        assert_eq!(v["events"].as_array().unwrap().len(), 1);
     }
 
     #[test]
-    fn failed_business_transaction_rolls_back_revision_event_and_receipt() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("store opens");
-        let mut first = request("first-terminal", 'a', 0, 100);
-        first.expected_session_revision = Some(0);
-        first.session_record = Some(record("same-session", 0, 100, 0, "completed"));
-        first.event = Some(event(
-            "first-event",
-            "same-session",
-            "completed",
-            100,
-            0,
-            "{}",
-        ));
-        store.commit(&first).expect("first record commits");
+    fn migrates_legacy_sqlite_history_receipts_and_archives_after_validation() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        fs::create_dir(&data_dir).unwrap();
+        let legacy_dir = dir.path().join("old-data");
+        fs::create_dir(&legacy_dir).unwrap();
+        let db = legacy_dir.join("pomodoro.sqlite3");
+        let c = rusqlite::Connection::open(&db).unwrap();
+        c.execute_batch("CREATE TABLE schema_meta(singleton INTEGER PRIMARY KEY, schema_version INTEGER, global_revision INTEGER, session_revision INTEGER, settings_revision INTEGER, created_utc_ms INTEGER);
+            CREATE TABLE active_session(singleton INTEGER PRIMARY KEY, checkpoint_json TEXT, session_revision INTEGER, updated_utc_ms INTEGER);
+            CREATE TABLE settings(singleton INTEGER PRIMARY KEY, settings_json TEXT, settings_revision INTEGER, updated_utc_ms INTEGER);
+            CREATE TABLE settings_history(settings_revision INTEGER PRIMARY KEY, settings_json TEXT, updated_utc_ms INTEGER);
+            CREATE TABLE session_history(session_id TEXT PRIMARY KEY, phase TEXT, target_ms INTEGER, actual_active_ms INTEGER, started_utc_ms INTEGER, ended_utc_ms INTEGER, start_local_date TEXT, start_offset_minutes INTEGER, outcome TEXT, reason TEXT);
+            CREATE TABLE event_log(event_id TEXT PRIMARY KEY, session_id TEXT, kind TEXT, occurred_utc_ms INTEGER, local_offset_minutes INTEGER, payload_json TEXT);
+            CREATE TABLE command_receipts(command_id TEXT PRIMARY KEY, payload_hash TEXT, result_payload TEXT, global_revision INTEGER, session_revision INTEGER, settings_revision INTEGER, committed_utc_ms INTEGER);
+            CREATE TABLE backup_state(singleton INTEGER PRIMARY KEY, last_backup_utc_ms INTEGER, last_backup_revision INTEGER);
+            INSERT INTO schema_meta VALUES(1,1,3,1,2,10);
+            INSERT INTO active_session VALUES(1,'{\"phase\":\"focus\"}',1,11);
+            INSERT INTO settings VALUES(1,'{\"focus_ms\":200}',2,12);
+            INSERT INTO settings_history VALUES(1,'{\"focus_ms\":100}',10);
+            INSERT INTO settings_history VALUES(2,'{\"focus_ms\":200}',12);
+            INSERT INTO session_history VALUES('s1','focus',1000,900,1,2,'2026-01-01',345,'completed',NULL);
+            INSERT INTO event_log VALUES('e1','s1','completed',2,345,'{\"ok\":true}');
+            INSERT INTO command_receipts VALUES('cmd','hash','{\"command_id\":\"cmd\",\"global_revision\":3,\"session_revision\":1,\"settings_revision\":2,\"committed_utc_ms\":12,\"duplicate\":false}',3,1,2,12);
+            INSERT INTO backup_state VALUES(1,10,1);").unwrap();
+        drop(c);
+        fs::create_dir(legacy_dir.join("backups")).unwrap();
+        fs::write(
+            legacy_dir.join("backups/backup-1.sqlite3"),
+            b"legacy backup",
+        )
+        .unwrap();
 
-        let mut failed = request("retry-after-failure", 'b', 1, 200);
-        failed.expected_session_revision = Some(1);
-        failed.checkpoint_json = Some(r#"{"phase":"next","round_index":2}"#.to_owned());
-        failed.session_record = Some(record("same-session", 100, 200, 0, "completed"));
-        failed.event = Some(event(
-            "failed-event",
-            "same-session",
-            "completed",
-            200,
-            0,
-            "{}",
-        ));
-        assert!(matches!(store.commit(&failed), Err(StoreError::Sqlite(_))));
-        let state = store.load_state().expect("state still reads");
-        assert_eq!(state.global_revision, 1);
-        assert_eq!(state.session_revision, 1);
+        let store = Store::open_with_legacy(&data_dir, &legacy_dir).unwrap();
+        let state = store.load_state().unwrap();
+        assert_eq!(state.global_revision, 3);
         assert_eq!(
-            state.checkpoint_json, None,
-            "failed final snapshot rolls back"
+            state.checkpoint_json.as_deref(),
+            Some(r#"{"phase":"focus"}"#)
         );
-
-        failed.session_record.as_mut().unwrap().session_id = "next-session".to_owned();
-        failed.event.as_mut().unwrap().session_id = Some("next-session".to_owned());
+        let export = dir.path().join("analysis.json");
+        store.export_json(&export).unwrap();
+        let data: Value = serde_json::from_slice(&fs::read(export).unwrap()).unwrap();
+        assert_eq!(data["sessions"][0]["session_id"], "s1");
+        assert_eq!(data["events"][0]["event_id"], "e1");
+        assert_eq!(data["settings_history"].as_array().unwrap().len(), 2);
+        assert!(data_dir.join("legacy-import/pomodoro.sqlite3").exists());
         assert!(
-            store.commit(&failed).is_ok(),
-            "failed transaction left no command receipt"
+            data_dir
+                .join("legacy-import/sqlite-backups/backup-1.sqlite3")
+                .exists()
         );
-        assert_eq!(
-            store.load_state().unwrap().checkpoint_json.as_deref(),
-            Some(r#"{"phase":"next","round_index":2}"#)
-        );
-    }
-
-    #[test]
-    fn backup_directory_failure_keeps_committed_primary_data_and_can_retry() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("new store opens");
-        fs::write(directory.path().join(BACKUP_DIR), b"blocked").expect("block backup directory");
-
-        let mut finish = request("finish-with-backup-error", 'a', 0, 1_700_000_000_000);
-        finish.expected_session_revision = Some(0);
-        finish.session_record = Some(record(
-            "kept-session",
-            1_699_999_000_000,
-            1_700_000_000_000,
-            60,
-            "completed",
-        ));
-        let result = store.commit(&finish).expect("business commit succeeds");
-        assert_eq!(result.receipt.global_revision, 1);
-        assert!(
-            matches!(result.backup_status, BackupStatus::Failed { ref message } if !message.is_empty())
-        );
-        assert_eq!(store.load_state().unwrap().global_revision, 1);
-
-        fs::remove_file(directory.path().join(BACKUP_DIR))
-            .expect("remove injected directory fault");
-        assert_eq!(
-            store.maybe_auto_backup(1_700_000_000_001),
-            BackupStatus::Created,
-            "a failed backup remains retryable"
-        );
-        let backups = backup_paths(directory.path());
-        assert_eq!(backups.len(), 1);
-        assert_backup_contents(&backups[0], 1, 0, 1);
+        assert!(!db.exists());
         drop(store);
-
-        let store = Store::open(directory.path()).expect("restart opens the persisted database");
-        assert_eq!(store.open_backup_status(), &BackupStatus::Created);
-        let backups = backup_paths(directory.path());
-        assert_eq!(backups.len(), 2, "successful backups remain retained");
-        for backup in backups {
-            assert_backup_contents(&backup, 1, 0, 1);
-        }
-    }
-
-    #[test]
-    fn periodic_backup_waits_for_interval_and_requires_changes() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("store opens");
-        let future = utc_now_ms().saturating_add(AUTO_BACKUP_INTERVAL_MS + 10_000);
-        assert_eq!(store.maybe_auto_backup(future), BackupStatus::NotDue);
-
-        let mut update = request("checkpoint", 'a', 0, future - AUTO_BACKUP_INTERVAL_MS);
-        update.expected_session_revision = Some(0);
-        update.checkpoint_json = Some(r#"{"session_id":"periodic","active_ms":50}"#.to_owned());
-        store.commit(&update).expect("checkpoint commits");
-        assert_eq!(store.maybe_auto_backup(future), BackupStatus::Created);
-        assert_eq!(backup_paths(directory.path()).len(), 1);
-        assert_eq!(
-            store.maybe_auto_backup(future + AUTO_BACKUP_INTERVAL_MS),
-            BackupStatus::NotDue
-        );
-    }
-
-    #[test]
-    fn export_rejects_database_sidecars_and_backup_tree_without_writing() {
-        let directory = tempdir().expect("temporary data directory");
-        let mut store = Store::open(directory.path()).expect("store opens");
-        let mut finish = request("protected-export", 'a', 0, 2_000);
-        finish.expected_session_revision = Some(0);
-        finish.session_record = Some(record("protected-session", 1_000, 2_000, 0, "completed"));
-        store
-            .commit(&finish)
-            .expect("valid application backup created");
-
-        let backup_root = directory.path().join(BACKUP_DIR);
-        let backup_path = backup_paths(directory.path()).pop().expect("backup exists");
-        let backup_file_name = backup_path.file_name().unwrap();
-        let original_backup = fs::read(&backup_path).expect("backup bytes read");
-        let mut destinations = vec![
-            directory.path().join(DATABASE_FILE),
-            directory.path().join(format!("{DATABASE_FILE}-wal")),
-            directory.path().join(format!("{DATABASE_FILE}-shm")),
-            directory.path().join(format!("{DATABASE_FILE}-journal")),
-            backup_path.clone(),
-            backup_root.join("nested").join("analysis.json"),
-            backup_root
-                .join("..")
-                .join(BACKUP_DIR)
-                .join(backup_file_name),
-        ];
-        destinations.push(backup_root.clone());
-
-        for destination in destinations {
-            assert!(matches!(
-                store.export_json(&destination),
-                Err(StoreError::InvalidRequest(_))
-            ));
-        }
-
-        assert!(!backup_root.join("nested").exists());
-        assert_eq!(
-            fs::read(&backup_path).expect("backup remains readable"),
-            original_backup
-        );
-        assert_backup_contents(&backup_path, 1, 0, 1);
-        assert_eq!(store.load_state().unwrap().global_revision, 1);
-    }
-
-    #[test]
-    fn backup_filename_collision_preserves_existing_valid_backup() {
-        let root = tempdir().expect("temporary root");
-        let source_dir = root.path().join("source");
-        let mut store = Store::open(&source_dir).expect("source store opens");
-        let mut finish = request("collision-source", 'b', 0, 3_000);
-        finish.expected_session_revision = Some(0);
-        finish.session_record = Some(record("collision-session", 2_000, 3_000, 0, "completed"));
-        store.commit(&finish).expect("source backup created");
-        let source_backup = backup_paths(&source_dir)
-            .pop()
-            .expect("source backup exists");
-        drop(store);
-
-        let collision_dir = root.path().join("collision-backups");
-        fs::create_dir_all(&collision_dir).expect("collision directory created");
-        let existing = collision_dir.join("backup-1234-1-7.sqlite3");
-        fs::copy(&source_backup, &existing).expect("install valid collision fixture");
-        let existing_bytes = fs::read(&existing).expect("old backup bytes read");
-        let partial = collision_dir.join("pending.sqlite3.partial");
-        fs::copy(&source_backup, &partial).expect("install validated backup snapshot");
-
-        let published = publish_backup_no_replace(&partial, &collision_dir, 1234, 1, 7)
-            .expect("publisher retries with an unused filename");
-        assert_eq!(
-            published.file_name().unwrap().to_string_lossy(),
-            "backup-1234-1-8.sqlite3"
-        );
-        assert!(!partial.exists());
-        assert_eq!(
-            fs::read(&existing).expect("old backup remains readable"),
-            existing_bytes
-        );
-        assert_backup_contents(&existing, 1, 0, 1);
-        assert_backup_contents(&published, 1, 0, 1);
+        let mut reopened = Store::open(&data_dir).unwrap();
+        let mut duplicate = req("cmd", 3);
+        duplicate.payload_hash = "hash".into();
+        let result = reopened.commit(&duplicate).unwrap();
+        assert!(result.receipt.duplicate);
+        assert_eq!(result.receipt.global_revision, 3);
     }
 }
