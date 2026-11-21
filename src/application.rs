@@ -874,6 +874,8 @@ mod tests {
             TimerSettings {
                 focus_minutes: 35,
                 topmost: true,
+                show_wall_clock: true,
+                wall_clock_offset_minutes: 345,
                 ..TimerSettings::default()
             },
             sample(2, 1_002),
@@ -886,9 +888,13 @@ mod tests {
         assert_eq!(value["settings_history"].as_array().unwrap().len(), 3);
         assert_eq!(value["settings"]["focus_minutes"], 35);
         assert_eq!(value["settings"]["topmost"], true);
+        assert_eq!(value["settings"]["show_wall_clock"], true);
+        assert_eq!(value["settings"]["wall_clock_offset_minutes"], 345);
         drop(app);
         let reopened = Application::open(directory.path(), sample(3, 1_003)).unwrap();
         assert!(reopened.timer.settings.topmost);
+        assert!(reopened.timer.settings.show_wall_clock);
+        assert_eq!(reopened.timer.settings.wall_clock_offset_minutes, 345);
     }
 
     #[test]

@@ -21,6 +21,8 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
 The timer opens in a frameless window. Use the icon inside the ring to start, pause, resume, or advance the timer. The chevron stays in place when you expand or collapse the window. Drag the time display to move the window. A restored timer stays paused while you wait to resume or discard it. **Settings** opens in the timer window and contains the **About** page. Use **Save** or **Cancel** to leave Settings. **Exit** or Alt+F4 saves the current timer state before closing.
 
+In builds from the current source, **Settings** can show the current date and time above the timer. Choose a fixed UTC offset and select **Save** to remember both choices. Fixed offsets stay the same throughout the year.
+
 ## Data and backups
 
 The JSONL-capable build stores data next to `Pomodoro.exe`:

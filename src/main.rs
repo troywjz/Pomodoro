@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use application::{Application, ApplicationError};
-use domain::{DomainEvent, RecoveryChoice, TimerSettings, TimerStatus};
+use domain::{CLOCK_UTC_OFFSETS, DomainEvent, RecoveryChoice, TimerSettings, TimerStatus};
 use platform::{clock_sample, logical_width, monitor_metrics, physical_window_width};
 use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode};
 use uuid::Uuid;
@@ -98,6 +98,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dark = Rc::new(Cell::new(platform::system_prefers_dark_theme()));
 
     let main_window = PomodoroWindow::new()?;
+    let zones: Vec<_> = CLOCK_UTC_OFFSETS
+        .iter()
+        .copied()
+        .map(utc_offset_label)
+        .collect();
+    main_window.set_wall_clock_zones(slint::ModelRc::new(slint::VecModel::from(zones)));
     main_window.set_dark(dark.get());
     sync_main_window(&main_window, &application.borrow(), &feedback.borrow());
 
@@ -318,6 +324,13 @@ fn connect_settings(
                 window.set_draft_long(settings.long_break_minutes as i32);
                 window.set_draft_rounds(settings.rounds_until_long_break as i32);
                 window.set_draft_topmost(settings.topmost);
+                window.set_draft_show_wall_clock(settings.show_wall_clock);
+                window.set_draft_wall_clock_zone(
+                    CLOCK_UTC_OFFSETS
+                        .iter()
+                        .position(|&offset| offset == settings.wall_clock_offset_minutes)
+                        .map_or(-1, |index| index as i32),
+                );
                 feedback.borrow_mut().clear();
                 sync_main_window(&window, &app, &feedback.borrow());
                 show_page(&window, 1);
@@ -336,24 +349,33 @@ fn connect_settings(
         let weak = window.as_weak();
         let application = application.clone();
         let feedback = feedback.clone();
-        window.on_save_requested(move |focus, short_break, long_break, rounds, topmost| {
-            let settings = TimerSettings {
-                focus_minutes: u32::try_from(focus).unwrap_or(0),
-                short_break_minutes: u32::try_from(short_break).unwrap_or(0),
-                long_break_minutes: u32::try_from(long_break).unwrap_or(0),
-                rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
-                topmost,
-            };
-            let result = application
-                .borrow_mut()
-                .update_settings(settings, clock_sample(origin));
-            let saved = result.is_ok();
-            set_result_feedback(&feedback, result, "设置");
-            refresh_main(&weak, &application, &feedback);
-            if saved && let Some(window) = weak.upgrade() {
-                show_page(&window, 0);
-            }
-        });
+        window.on_save_requested(
+            move |focus, short_break, long_break, rounds, topmost, show_wall_clock, zone| {
+                let wall_clock_offset_minutes = usize::try_from(zone)
+                    .ok()
+                    .and_then(|index| CLOCK_UTC_OFFSETS.get(index))
+                    .copied()
+                    .unwrap_or(i32::MAX);
+                let settings = TimerSettings {
+                    focus_minutes: u32::try_from(focus).unwrap_or(0),
+                    short_break_minutes: u32::try_from(short_break).unwrap_or(0),
+                    long_break_minutes: u32::try_from(long_break).unwrap_or(0),
+                    rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
+                    topmost,
+                    show_wall_clock,
+                    wall_clock_offset_minutes,
+                };
+                let result = application
+                    .borrow_mut()
+                    .update_settings(settings, clock_sample(origin));
+                let saved = result.is_ok();
+                set_result_feedback(&feedback, result, "设置");
+                refresh_main(&weak, &application, &feedback);
+                if saved && let Some(window) = weak.upgrade() {
+                    show_page(&window, 0);
+                }
+            },
+        );
     }
     {
         let weak = window.as_weak();
@@ -369,6 +391,38 @@ fn connect_settings(
     }
 }
 
+fn utc_offset_label(minutes: i32) -> slint::SharedString {
+    let sign = if minutes < 0 { "−" } else { "+" };
+    let absolute = minutes.abs();
+    let hours = absolute / 60;
+    let remainder = absolute % 60;
+    if remainder == 0 {
+        format!("UTC{sign}{hours}").into()
+    } else {
+        format!("UTC{sign}{hours}:{remainder:02}").into()
+    }
+}
+
+#[test]
+fn wall_clock_applies_fixed_offsets_across_dates() {
+    assert_eq!(format_wall_clock(0, -210), "1969/12/31  20 : 30 : 00");
+    assert_eq!(format_wall_clock(1, 345), "1970/01/01  05 : 45 : 01");
+    assert_eq!(utc_offset_label(345).as_str(), "UTC+5:45");
+    assert_eq!(utc_offset_label(-480).as_str(), "UTC−8");
+}
+
+fn format_wall_clock(unix_seconds: i64, offset_minutes: i32) -> String {
+    let Some(time) = chrono::DateTime::from_timestamp(unix_seconds, 0) else {
+        return String::new();
+    };
+    let Some(offset) = chrono::FixedOffset::east_opt(offset_minutes * 60) else {
+        return String::new();
+    };
+    time.with_timezone(&offset)
+        .format("%Y/%m/%d  %H : %M : %S")
+        .to_string()
+}
+
 fn show_page(window: &PomodoroWindow, page: i32) {
     window.set_page(page);
     apply_main_size(window, window.window().scale_factor());
@@ -376,6 +430,14 @@ fn show_page(window: &PomodoroWindow, page: i32) {
 
 fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback: &str) {
     let timer = &application.timer;
+    window.set_show_wall_clock(timer.settings.show_wall_clock);
+    if timer.settings.show_wall_clock {
+        let utc = chrono::Utc::now().timestamp();
+        let text = format_wall_clock(utc, timer.settings.wall_clock_offset_minutes);
+        if window.get_wall_clock_label().as_str() != text {
+            window.set_wall_clock_label(text.into());
+        }
+    }
     if window.get_keep_on_top() != timer.settings.topmost {
         window.set_keep_on_top(timer.settings.topmost);
     }
