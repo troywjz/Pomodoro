@@ -166,9 +166,6 @@ pub enum DomainEvent {
     RecoveryContinued {
         session_id: String,
     },
-    RecoveryKeptPaused {
-        session_id: String,
-    },
     RecoveryRequired {
         session_id: String,
         reason: RecoveryReason,
@@ -186,7 +183,6 @@ pub enum RecoveryReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryChoice {
     Continue,
-    KeepPaused,
     Discard,
 }
 
@@ -438,13 +434,6 @@ impl TimerCore {
                 session.status_before_recovery = None;
                 Ok(Some(DomainEvent::RecoveryContinued { session_id: id }))
             }
-            RecoveryChoice::KeepPaused => {
-                session.status = SessionStatus::Paused;
-                session.last_sample_monotonic_ms = sample.monotonic_ms;
-                session.last_boot_elapsed_ms = sample.boot_elapsed_ms;
-                session.status_before_recovery = None;
-                Ok(Some(DomainEvent::RecoveryKeptPaused { session_id: id }))
-            }
             RecoveryChoice::Discard => {
                 let phase = session.phase;
                 let outcome = if phase == Phase::Focus {
@@ -596,11 +585,13 @@ mod tests {
         assert_eq!(timer.status(), TimerStatus::Recovery);
         assert_eq!(timer.session.as_ref().unwrap().remaining_ms, 45_000);
 
-        timer
-            .resolve_recovery(RecoveryChoice::KeepPaused, sample(1_000, 99_000_000))
-            .unwrap();
-        assert_eq!(timer.status(), TimerStatus::Paused);
+        assert_eq!(timer.tick(sample(300_000, 99_000_000)).elapsed_ms, 0);
+        assert_eq!(timer.status(), TimerStatus::Recovery);
         assert_eq!(timer.session.as_ref().unwrap().remaining_ms, 45_000);
+        timer
+            .resolve_recovery(RecoveryChoice::Continue, sample(300_000, 99_000_000))
+            .unwrap();
+        assert_eq!(timer.tick(sample(301_000, 99_001_000)).elapsed_ms, 1_000);
     }
 
     #[test]

@@ -563,7 +563,6 @@ fn make_stored_event(
         DomainEvent::Ended(_) => "ended",
         DomainEvent::Advanced { .. } => "advanced",
         DomainEvent::RecoveryContinued { .. } => "recovery_continued",
-        DomainEvent::RecoveryKeptPaused { .. } => "recovery_kept_paused",
         DomainEvent::RecoveryRequired { .. } => "recovery_required",
         DomainEvent::SettingsChanged(_) => "settings_changed",
     };
@@ -572,7 +571,6 @@ fn make_stored_event(
         | DomainEvent::Paused { session_id, .. }
         | DomainEvent::Resumed { session_id }
         | DomainEvent::RecoveryContinued { session_id }
-        | DomainEvent::RecoveryKeptPaused { session_id }
         | DomainEvent::RecoveryRequired { session_id, .. } => Some(session_id.clone()),
         DomainEvent::Completed(record) | DomainEvent::Ended(record) => {
             Some(record.session_id.clone())
@@ -711,14 +709,19 @@ mod tests {
             recovered.timer.session.as_ref().unwrap().remaining_ms,
             30_000
         );
-        recovered
-            .resolve_recovery(RecoveryChoice::KeepPaused, sample(9_000_000, 99_000_000))
-            .unwrap();
-        assert_eq!(recovered.timer.status(), TimerStatus::Paused);
         recovered.tick(sample(9_300_000, 99_300_000));
+        assert_eq!(recovered.timer.status(), TimerStatus::Recovery);
         assert_eq!(
             recovered.timer.session.as_ref().unwrap().remaining_ms,
             30_000
+        );
+        recovered
+            .resolve_recovery(RecoveryChoice::Continue, sample(9_300_000, 99_300_000))
+            .unwrap();
+        recovered.tick(sample(9_301_000, 99_301_000));
+        assert_eq!(
+            recovered.timer.session.as_ref().unwrap().remaining_ms,
+            29_000
         );
     }
 

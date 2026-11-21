@@ -19,7 +19,9 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 2. Double-click `Pomodoro.exe`.
 3. If Windows reports that `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install Microsoft's [Visual C++ x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe), then reopen Pomodoro.
 
-The window has no Windows title bar. Drag the phase-and-round heading to move it. Open **Settings** to change timer durations, long-break interval, or **Always on top**. **Save** applies changes. **Cancel** discards them. The **Exit** button or Alt+F4 saves the current timer state before closing. On the next launch, choose whether to continue, keep the timer paused, or discard the active session.
+In the v0.2.0 download, the window has no Windows title bar. Drag the phase-and-round heading to move it. Open **Settings** to change timer durations, long-break interval, or **Always on top**. **Save** applies changes. **Cancel** discards them. The **Exit** button or Alt+F4 saves the current timer state before closing. On the next launch, choose whether to continue, keep the timer paused, or discard the active session.
+
+When building from the current source, use the icon inside the ring to start, pause, resume, or advance the timer. The chevron stays in place when you expand or collapse the window. Drag the time display to move the window. A restored timer stays paused while you wait to resume or discard it. **Settings** opens in the timer window and contains the **About** page.
 
 ## Data and backups
 
