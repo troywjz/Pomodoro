@@ -5,6 +5,21 @@ use chrono::{Local, Utc};
 use crate::domain::ClockSample;
 
 #[cfg(windows)]
+pub fn move_window_with_pointer(window: &slint::Window, offset_x: i32, offset_y: i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    // Both coordinates are in desktop pixels, even after the window crosses a DPI boundary.
+    let mut cursor = POINT::default();
+    if unsafe { GetCursorPos(&mut cursor) } != 0 {
+        let position = slint::PhysicalPosition::new(cursor.x - offset_x, cursor.y - offset_y);
+        if window.position() != position {
+            window.set_position(position);
+        }
+    }
+}
+
+#[cfg(windows)]
 pub fn clock_sample(_origin: Instant) -> ClockSample {
     use std::sync::OnceLock;
 
