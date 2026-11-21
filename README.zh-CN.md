@@ -4,7 +4,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[下载 Pomodoro v0.2.0 Windows x64 版本](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0)
+[下载 Pomodoro v0.2.1 Windows x64 版本](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.1)
 
 ## 功能
 
@@ -15,13 +15,11 @@
 
 ## 安装与运行
 
-1. 从 [v0.2.0 Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.0) 下载并解压 `Pomodoro-v0.2.0-windows-x64.zip`。
+1. 从 [v0.2.1 Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.1) 下载并解压 `Pomodoro-v0.2.1-windows-x64.zip`。
 2. 双击 `Pomodoro.exe`。
 3. 如果 Windows 提示缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll`，请安装微软的 [Visual C++ x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)，再重新打开程序。
 
-v0.2.0 下载版的窗口不显示 Windows 标题栏。拖动阶段和轮次标题区域可以移动窗口。在「设置」中调整计时时长、长休间隔或「窗口置顶」。点击「保存」应用设置，点击「取消」放弃更改。点击「退出」或按 Alt+F4 会在关闭前保存当前计时。下次启动时，可以选择继续、保持暂停或放弃当前会话。
-
-从当前源码构建的版本可点击圆环中心的图标开始、暂停、继续计时或进入下一段。展开和收起共用同一位置的箭头图标，拖动时间数字可以移动窗口。恢复启动后，计时保持暂停，等待你继续或放弃本段。「设置」在当前窗口打开，「关于」位于设置页。
+窗口采用无边框设计。点击圆环中心的图标开始、暂停、继续计时或进入下一段。展开和收起共用同一位置的箭头图标，拖动时间数字可以移动窗口。恢复启动后，计时保持暂停，等待你继续或放弃本段。「设置」在当前窗口打开，「关于」位于设置页。点击「保存」应用设置，点击「取消」放弃更改。点击「退出」或按 Alt+F4 会在关闭前保存计时。
 
 ## 数据与自动备份
 
