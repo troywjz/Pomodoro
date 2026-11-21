@@ -4,7 +4,7 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[Download Pomodoro v0.2.1 for Windows x64](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.1)
+[Download Pomodoro v0.2.2 for Windows x64](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.2)
 
 ## Features
 
@@ -15,13 +15,13 @@ A compact, frameless Pomodoro timer for Windows, built with Rust and Slint.
 
 ## Install and run
 
-1. Download and extract `Pomodoro-v0.2.1-windows-x64.zip` from the [v0.2.1 release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.1).
+1. Download and extract `Pomodoro-v0.2.2-windows-x64.zip` from the [v0.2.2 release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.2).
 2. Double-click `Pomodoro.exe`.
 3. If Windows reports that `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install Microsoft's [Visual C++ x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe), then reopen Pomodoro.
 
 The timer opens in a frameless window. Use the icon inside the ring to start, pause, resume, or advance the timer. The chevron stays in place when you expand or collapse the window. Drag the time display to move the window. A restored timer stays paused while you wait to resume or discard it. **Settings** opens in the timer window and contains the **About** page. Use **Save** or **Cancel** to leave Settings. **Exit** or Alt+F4 saves the current timer state before closing.
 
-In builds from the current source, **Settings** can show the current date and time above the timer. Choose a fixed UTC offset and select **Save** to remember both choices. Fixed offsets stay the same throughout the year.
+**Settings** can show the current date and time above the timer. Choose a fixed UTC offset and select **Save** to remember both choices. Fixed offsets stay the same throughout the year.
 
 ## Data and backups
 
@@ -52,7 +52,7 @@ The JSON export contains a consistent snapshot of timer state, current and previ
 
 ## Build from source
 
-Install Rust 1.100.0 with the MSVC target and the Visual Studio C++ Build Tools, then run:
+Install Rust 1.100.0 with the MSVC target and the Visual Studio C++ Build Tools with a Windows SDK. Run the commands in a developer shell with the SDK resource compiler (`rc.exe`) on PATH:
 
 ```powershell
 cargo run --locked
