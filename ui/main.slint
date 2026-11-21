@@ -77,6 +77,8 @@ component ProgressRing inherits Rectangle {
     Path {
         width: parent.width;
         height: parent.height;
+        viewbox-width: compact ? 44 : 52;
+        viewbox-height: compact ? 44 : 52;
         commands: compact
             ? "M 22 2 A 20 20 0 1 1 21.99 2"
             : "M 26 2 A 24 24 0 1 1 25.99 2";
@@ -88,6 +90,8 @@ component ProgressRing inherits Rectangle {
     Path {
         width: parent.width;
         height: parent.height;
+        viewbox-width: compact ? 44 : 52;
+        viewbox-height: compact ? 44 : 52;
         commands: root.progress-path;
         stroke: accent;
         stroke-width: (compact ? 4 : 5) * root.layout-scale * 1px;
