@@ -628,3 +628,41 @@ fn data_directory() -> Result<PathBuf, io::Error> {
         Ok(base.join("Pomodoro"))
     }
 }
+
+#[cfg(test)]
+mod progress_path_tests {
+    use super::progress_path;
+
+    #[test]
+    fn empty_and_complete_progress_have_distinct_paths() {
+        assert_eq!(progress_path(0.0, false), "");
+        assert_eq!(progress_path(-0.1, false), "");
+        assert_eq!(
+            progress_path(1.0, false),
+            "M 26 2 A 24 24 0 1 1 26 50 A 24 24 0 1 1 26 2"
+        );
+        assert_eq!(
+            progress_path(1.1, true),
+            "M 22 2 A 20 20 0 1 1 22 42 A 20 20 0 1 1 22 2"
+        );
+    }
+
+    #[test]
+    fn small_remaining_progress_keeps_its_original_circle_geometry() {
+        assert_eq!(
+            progress_path(93.0 / 1500.0, false),
+            "M 26 2 A 24 24 0 0 1 35.115 3.798"
+        );
+        assert_eq!(
+            progress_path(93.0 / 1500.0, true),
+            "M 22 2 A 20 20 0 0 1 29.596 3.498"
+        );
+    }
+
+    #[test]
+    fn arc_flag_changes_only_after_halfway() {
+        assert!(progress_path(0.5, false).contains(" 0 0 1 "));
+        assert!(progress_path(0.500_001, false).contains(" 0 1 1 "));
+        assert!(progress_path(0.999_999, false).contains(" 0 1 1 "));
+    }
+}
