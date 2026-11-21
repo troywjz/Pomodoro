@@ -719,7 +719,10 @@ mod tests {
             .resolve_recovery(RecoveryChoice::Continue, sample(9_300_000, 99_300_000))
             .unwrap();
         recovered.tick(sample(9_301_000, 99_301_000));
-        assert_eq!(recovered.timer.session.as_ref().unwrap().remaining_ms, 29_000);
+        assert_eq!(
+            recovered.timer.session.as_ref().unwrap().remaining_ms,
+            29_000
+        );
     }
 
     #[test]

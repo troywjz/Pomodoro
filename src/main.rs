@@ -98,43 +98,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dark = Rc::new(Cell::new(platform::system_prefers_dark_theme()));
 
     let main_window = PomodoroWindow::new()?;
-    let settings_window = SettingsWindow::new()?;
-    let about_window = AboutWindow::new()?;
-
     main_window.set_dark(dark.get());
-    settings_window.set_dark(dark.get());
-    about_window.set_dark(dark.get());
     sync_main_window(&main_window, &application.borrow(), &feedback.borrow());
-    sync_settings_window(&settings_window, &application.borrow());
 
     let (monitor_width, dpi) = monitor_metrics(&main_window.window());
     resize_main_window(&main_window, monitor_width, dpi);
 
     let main_weak = main_window.as_weak();
-    let settings_weak = settings_window.as_weak();
-    let about_weak = about_window.as_weak();
 
     {
         let application = application.clone();
         let main_weak = main_weak.clone();
-        let settings_weak = settings_weak.clone();
-        let about_weak = about_weak.clone();
         let feedback = feedback.clone();
         main_window.window().on_close_requested(move || {
             let result = application.borrow_mut().prepare_exit(clock_sample(origin));
             if result.is_ok() {
-                if let Some(window) = settings_weak.upgrade() {
-                    let _ = window.hide();
-                }
-                if let Some(window) = about_weak.upgrade() {
-                    let _ = window.hide();
-                }
                 return CloseRequestResponse::HideWindow;
             }
 
             if let Some(window) = main_weak.upgrade() {
                 let old_height = window.get_target_height();
                 window.set_expanded(true);
+                window.set_page(0);
                 let application = application.borrow();
                 *feedback.borrow_mut() = if application.feedback().is_empty() {
                     "退出前保存失败，请重试。".to_owned()
@@ -234,18 +219,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let application = application.clone();
         let feedback = feedback.clone();
         let main_weak = main_weak.clone();
-        main_window.on_recovery_pause_requested(move || {
-            let result = application
-                .borrow_mut()
-                .resolve_recovery(RecoveryChoice::KeepPaused, clock_sample(origin));
-            set_result_feedback(&feedback, result.map(|_| ()), "保持暂停");
-            refresh_main(&main_weak, &application, &feedback);
-        });
-    }
-    {
-        let application = application.clone();
-        let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
         main_window.on_recovery_discard_requested(move || {
             let result = application
                 .borrow_mut()
@@ -267,55 +240,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    {
-        let application = application.clone();
-        let settings_weak = settings_weak.clone();
-        main_window.on_settings_requested(move || {
-            if let Some(window) = settings_weak.upgrade() {
-                sync_settings_window(&window, &application.borrow());
-                window.show().ok();
-            }
-        });
-    }
-    {
-        let application = application.clone();
-        let about_weak = about_weak.clone();
-        let dark = dark.clone();
-        main_window.on_about_requested(move || {
-            if let Some(window) = about_weak.upgrade() {
-                window.set_dark(dark.get());
-                window.set_keep_on_top(application.borrow().timer.settings.topmost);
-                window.show().ok();
-            }
-        });
-    }
-
-    connect_settings(
-        &settings_window,
-        &application,
-        &feedback,
-        &main_weak,
-        origin,
-    );
-    {
-        let settings_weak = settings_window.as_weak();
-        let application = application.clone();
-        let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
-        settings_window.on_close_requested(move || {
-            if let Some(window) = settings_weak.upgrade() {
-                cancel_settings(&window, &application, &feedback, &main_weak);
-            }
-        });
-    }
-    {
-        let about_weak = about_weak.clone();
-        about_window.on_close_requested(move || {
-            if let Some(window) = about_weak.upgrade() {
-                window.hide().ok();
-            }
-        });
-    }
+    connect_settings(&main_window, &application, &feedback, origin);
 
     let tick_timer = Timer::default();
     {
@@ -347,8 +272,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         let main_weak = main_weak.clone();
         let dark = dark.clone();
-        let settings_weak = settings_weak.clone();
-        let about_weak = about_weak.clone();
         let mut last_metrics = (monitor_width, dpi);
         platform_timer.start(
             TimerMode::Repeated,
@@ -357,12 +280,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let system_dark = platform::system_prefers_dark_theme();
                 if dark.replace(system_dark) != system_dark {
                     if let Some(window) = main_weak.upgrade() {
-                        window.set_dark(system_dark);
-                    }
-                    if let Some(window) = settings_weak.upgrade() {
-                        window.set_dark(system_dark);
-                    }
-                    if let Some(window) = about_weak.upgrade() {
                         window.set_dark(system_dark);
                     }
                 }
@@ -383,112 +300,78 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn connect_settings(
-    settings_window: &SettingsWindow,
+    window: &PomodoroWindow,
     application: &Rc<RefCell<Application>>,
     feedback: &Rc<RefCell<String>>,
-    main_weak: &slint::Weak<PomodoroWindow>,
     origin: Instant,
 ) {
     {
-        let settings_weak = settings_window.as_weak();
-        settings_window.on_focus_delta(move |delta| {
-            if let Some(window) = settings_weak.upgrade() {
-                window.set_focus_minutes((window.get_focus_minutes() + delta).clamp(1, 180));
-            }
-        });
-    }
-    {
-        let settings_weak = settings_window.as_weak();
-        settings_window.on_short_delta(move |delta| {
-            if let Some(window) = settings_weak.upgrade() {
-                window.set_short_minutes((window.get_short_minutes() + delta).clamp(1, 60));
-            }
-        });
-    }
-    {
-        let settings_weak = settings_window.as_weak();
-        settings_window.on_long_delta(move |delta| {
-            if let Some(window) = settings_weak.upgrade() {
-                window.set_long_minutes((window.get_long_minutes() + delta).clamp(1, 120));
-            }
-        });
-    }
-    {
-        let settings_weak = settings_window.as_weak();
-        settings_window.on_rounds_delta(move |delta| {
-            if let Some(window) = settings_weak.upgrade() {
-                window.set_rounds((window.get_rounds() + delta).clamp(1, 12));
-            }
-        });
-    }
-
-    {
-        let settings_weak = settings_window.as_weak();
+        let weak = window.as_weak();
         let application = application.clone();
         let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
-        settings_window.on_save_requested(
-            move |focus, short_break, long_break, rounds, topmost| {
-                let settings = TimerSettings {
-                    focus_minutes: u32::try_from(focus).unwrap_or(0),
-                    short_break_minutes: u32::try_from(short_break).unwrap_or(0),
-                    long_break_minutes: u32::try_from(long_break).unwrap_or(0),
-                    rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
-                    topmost,
-                };
-                let result = application
-                    .borrow_mut()
-                    .update_settings(settings, clock_sample(origin));
-                let saved = result.is_ok();
-                set_result_feedback(&feedback, result, "设置");
-                if saved {
-                    if let Some(window) = settings_weak.upgrade() {
-                        sync_settings_window(&window, &application.borrow());
-                        window.hide().ok();
-                    }
-                }
-                refresh_main(&main_weak, &application, &feedback);
-            },
-        );
+        window.on_settings_requested(move || {
+            if let Some(window) = weak.upgrade() {
+                let app = application.borrow();
+                let settings = &app.timer.settings;
+                window.set_draft_focus(settings.focus_minutes as i32);
+                window.set_draft_short(settings.short_break_minutes as i32);
+                window.set_draft_long(settings.long_break_minutes as i32);
+                window.set_draft_rounds(settings.rounds_until_long_break as i32);
+                window.set_draft_topmost(settings.topmost);
+                feedback.borrow_mut().clear();
+                sync_main_window(&window, &app, &feedback.borrow());
+                show_page(&window, 1);
+            }
+        });
     }
-
     {
-        let settings_weak = settings_window.as_weak();
+        let weak = window.as_weak();
+        window.on_page_requested(move |page| {
+            if let Some(window) = weak.upgrade() {
+                show_page(&window, page);
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
         let application = application.clone();
         let feedback = feedback.clone();
-        let main_weak = main_weak.clone();
-        settings_window.on_cancel_requested(move || {
-            if let Some(window) = settings_weak.upgrade() {
-                cancel_settings(&window, &application, &feedback, &main_weak);
+        window.on_save_requested(move |focus, short_break, long_break, rounds, topmost| {
+            let settings = TimerSettings {
+                focus_minutes: u32::try_from(focus).unwrap_or(0),
+                short_break_minutes: u32::try_from(short_break).unwrap_or(0),
+                long_break_minutes: u32::try_from(long_break).unwrap_or(0),
+                rounds_until_long_break: u8::try_from(rounds).unwrap_or(0),
+                topmost,
+            };
+            let result = application
+                .borrow_mut()
+                .update_settings(settings, clock_sample(origin));
+            let saved = result.is_ok();
+            set_result_feedback(&feedback, result, "设置");
+            refresh_main(&weak, &application, &feedback);
+            if saved && let Some(window) = weak.upgrade() {
+                show_page(&window, 0);
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let application = application.clone();
+        let feedback = feedback.clone();
+        window.on_cancel_requested(move || {
+            feedback.borrow_mut().clear();
+            refresh_main(&weak, &application, &feedback);
+            if let Some(window) = weak.upgrade() {
+                show_page(&window, 0);
             }
         });
     }
 }
 
-fn cancel_settings(
-    settings_window: &SettingsWindow,
-    application: &Rc<RefCell<Application>>,
-    feedback: &Rc<RefCell<String>>,
-    main_weak: &slint::Weak<PomodoroWindow>,
-) {
-    sync_settings_window(settings_window, &application.borrow());
-    settings_window.hide().ok();
-    feedback.borrow_mut().clear();
-    refresh_main(main_weak, application, feedback);
-}
-
-fn sync_settings_window(window: &SettingsWindow, application: &Application) {
-    let settings = &application.timer.settings;
-    window.set_focus_minutes(settings.focus_minutes as i32);
-    window.set_short_minutes(settings.short_break_minutes as i32);
-    window.set_long_minutes(settings.long_break_minutes as i32);
-    window.set_rounds(settings.rounds_until_long_break as i32);
-    window.set_draft_focus(settings.focus_minutes as i32);
-    window.set_draft_short(settings.short_break_minutes as i32);
-    window.set_draft_long(settings.long_break_minutes as i32);
-    window.set_draft_rounds(settings.rounds_until_long_break as i32);
-    window.set_draft_topmost(settings.topmost);
-    window.set_keep_on_top(settings.topmost);
+fn show_page(window: &PomodoroWindow, page: i32) {
+    window.set_page(page);
+    apply_main_size(window, window.window().scale_factor());
 }
 
 fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback: &str) {
@@ -520,7 +403,7 @@ fn sync_main_window(window: &PomodoroWindow, application: &Application, feedback
             } else {
                 remaining_ms as f32 / target_ms as f32
             },
-            !window.get_expanded(),
+            false,
         )
         .into(),
     );

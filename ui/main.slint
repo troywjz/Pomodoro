@@ -6,6 +6,8 @@ component ActionButton inherits Rectangle {
     in-out property <bool> dark;
     in-out property <bool> enabled: true;
     in-out property <float> font-scale: 1;
+    in property <string> icon-path;
+    in property <bool> circular;
     callback clicked();
     out property <bool> has-focus: button-focus.has-focus;
     forward-focus: button-focus;
@@ -14,15 +16,15 @@ component ActionButton inherits Rectangle {
     accessible-label: root.label;
     accessible-action-default => { if (root.enabled) { root.clicked(); } }
 
-    background: !enabled ? (dark ? #252a34 : #e8ebf0)
+    background: circular ? transparent : !enabled ? (dark ? #252a34 : #e8ebf0)
         : primary ? (dark ? #91a7ff : #4263eb)
         : (dark ? #252c39 : #edf1ff);
     border-color: primary ? (dark ? #91a7ff : #4263eb)
         : (dark ? #394152 : #cbd3df);
-    border-width: 1px;
-    border-radius: 9 * root.font-scale * 1px;
+    border-width: circular ? 0px : 1px;
+    border-radius: (circular ? 20 : 9) * root.font-scale * 1px;
 
-    Text {
+    if root.icon-path == "": Text {
         text: label;
         color: !enabled ? (dark ? #7d8490 : #9aa2af)
             : primary ? (dark ? #151a25 : #ffffff)
@@ -32,6 +34,17 @@ component ActionButton inherits Rectangle {
         font-weight: 700;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+
+    if root.icon-path != "": Path {
+        width: 16 * root.font-scale * 1px;
+        height: self.width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: root.icon-path;
+        fill: root.dark ? #f3f5f8 : #182236;
     }
 
     TouchArea {
@@ -100,11 +113,53 @@ component ProgressRing inherits Rectangle {
     }
 }
 
+component SettingRow inherits Rectangle {
+    in-out property <bool> dark;
+    in property <float> scale: 1;
+    in-out property <string> title;
+    in-out property <int> value;
+    in-out property <string> suffix;
+    callback decrement();
+    callback increment();
+    height: 26 * root.scale * 1px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: 5 * root.scale * 1px;
+        Text {
+            text: root.title;
+            color: root.dark ? #f3f5f8 : #182236;
+            font-family: "Microsoft YaHei UI";
+            font-size: 13 * root.scale * 1px;
+            vertical-alignment: center;
+            width: 56 * root.scale * 1px;
+        }
+        ActionButton { label: "−"; primary: false; dark: root.dark; font-scale: root.scale; width: 25 * root.scale * 1px; height: 26 * root.scale * 1px; clicked => { root.decrement(); } }
+        Text {
+            text: root.value + " " + root.suffix;
+            color: root.dark ? #f3f5f8 : #182236;
+            font-family: "Microsoft YaHei UI";
+            font-size: 13 * root.scale * 1px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 39 * root.scale * 1px;
+        }
+        ActionButton { label: "+"; primary: false; dark: root.dark; font-scale: root.scale; width: 25 * root.scale * 1px; height: 26 * root.scale * 1px; clicked => { root.increment(); } }
+    }
+}
+
 export component PomodoroWindow inherits Window {
     in property <bool> keep-on-top;
     always-on-top: root.keep-on-top;
     in-out property <length> target-width: 192px;
-    out property <length> target-height: (expanded ? (recovering ? (feedback != "" ? 266 : 228) : (feedback != "" ? 262 : 224)) : 72) * root.layout-scale * 1px;
+    in-out property <int> page: 0;
+    out property <length> target-height: (page == 1 ? (feedback == "" ? 263 : 301)
+        : page == 2 ? 134 : (expanded ? (feedback == "" ? 164 : 202) : 72))
+        * root.layout-scale * 1px;
+    in-out property <int> draft-focus: 25;
+    in-out property <int> draft-short: 5;
+    in-out property <int> draft-long: 15;
+    in-out property <int> draft-rounds: 4;
+    in-out property <bool> draft-topmost;
     in-out property <string> progress-path: "M 26 2 A 24 24 0 1 1 26 50 A 24 24 0 1 1 26 2";
     in-out property <bool> dark;
     in-out property <bool> expanded: true;
@@ -128,11 +183,12 @@ export component PomodoroWindow inherits Window {
     callback end-requested();
     callback next-requested();
     callback recovery-continue-requested();
-    callback recovery-pause-requested();
     callback recovery-discard-requested();
     callback toggle-requested();
     callback settings-requested();
-    callback about-requested();
+    callback page-requested(int);
+    callback save-requested(int, int, int, int, bool);
+    callback cancel-requested();
     callback exit-requested();
 
     no-frame: true;
@@ -150,14 +206,79 @@ export component PomodoroWindow inherits Window {
         border-width: 1px;
         border-radius: 16 * root.layout-scale * 1px;
 
-        if expanded: VerticalLayout {
+        if root.page == 0: VerticalLayout {
             padding: 9 * root.layout-scale * 1px;
             spacing: 6 * root.layout-scale * 1px;
 
-            WindowMoveArea {
-                height: 21 * root.layout-scale * 1px;
+            HorizontalLayout {
+                spacing: 8 * root.layout-scale * 1px;
+                alignment: center;
+                height: 52 * root.layout-scale * 1px;
+
+                ProgressRing {
+                    progress: root.progress;
+                    dark: root.dark;
+                    compact: false;
+                    layout-scale: root.layout-scale;
+                    accent: root.accent;
+                    progress-path: root.progress-path;
+
+                    ActionButton {
+                        width: 36 * root.layout-scale * 1px;
+                        height: self.width;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        label: root.completed ? "下一段" : (root.running ? "暂停"
+                            : (root.paused || root.recovering ? "继续" : "开始"));
+                        icon-path: root.completed ? "M 3 2 L 11 8 L 3 14 Z M 12 2 H 14 V 14 H 12 Z"
+                            : root.running ? "M 4 3 H 7 V 13 H 4 Z M 9 3 H 12 V 13 H 9 Z"
+                            : "M 5 2 L 14 8 L 5 14 Z";
+                        circular: true;
+                        dark: root.dark;
+                        font-scale: root.layout-scale;
+                        clicked => {
+                            if (root.recovering) { root.recovery-continue-requested(); }
+                            else if (root.completed) { root.next-requested(); }
+                            else if (root.running) { root.pause-requested(); }
+                            else if (root.paused) { root.resume-requested(); }
+                            else { root.start-requested(); }
+                        }
+                    }
+                }
+                WindowMoveArea {
+                    min-width: 72 * root.layout-scale * 1px;
+                    max-width: self.min-width;
+                    Text {
+                        text: root.time-label;
+                        accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
+                        color: dark ? #f3f5f8 : #182236;
+                        font-family: "Microsoft YaHei UI";
+                        font-size: 23 * root.layout-scale * 1px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    width: 30 * root.layout-scale * 1px;
+                    ActionButton {
+                        y: (parent.height - self.height) / 2;
+                        width: parent.width;
+                        height: self.width;
+                        label: root.expanded ? "收起" : "展开";
+                        icon-path: root.expanded ? "M 3 10 L 8 5 L 13 10 L 11.5 11.5 L 8 8 L 4.5 11.5 Z"
+                            : "M 3 6 L 8 11 L 13 6 L 11.5 4.5 L 8 8 L 4.5 4.5 Z";
+                        dark: root.dark;
+                        font-scale: root.layout-scale;
+                        clicked => { root.toggle-requested(); }
+                    }
+                }
+            }
+
+            if root.expanded: WindowMoveArea {
+                height: 20 * root.layout-scale * 1px;
                 Text {
-                    text: phase-title + "  ·  " + (root.recovering ? "待恢复" : round-label);
+                    text: root.phase-title + "  ·  " + (root.recovering ? "待恢复" : root.round-label);
                     color: dark ? #f3f5f8 : #182236;
                     font-family: "Microsoft YaHei UI";
                     font-size: 14 * root.layout-scale * 1px;
@@ -166,61 +287,22 @@ export component PomodoroWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
-
-            HorizontalLayout {
-                spacing: 10 * root.layout-scale * 1px;
-                alignment: center;
-                height: 52 * root.layout-scale * 1px;
-                ProgressRing {
-                    progress: root.progress;
+            if root.expanded: HorizontalLayout {
+                spacing: 7 * root.layout-scale * 1px;
+                height: 30 * root.layout-scale * 1px;
+                ActionButton {
+                    label: root.recovering ? "放弃本段" : "提前结束";
+                    enabled: root.recovering || root.running || root.paused;
                     dark: root.dark;
-                    compact: false;
-                    layout-scale: root.layout-scale;
-                    accent: root.accent;
-                    progress-path: root.progress-path;
+                    font-scale: root.layout-scale;
+                    clicked => {
+                        if (root.recovering) { root.recovery-discard-requested(); }
+                        else { root.end-requested(); }
+                    }
                 }
-                Text {
-                    text: root.time-label;
-                    accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
-                    color: dark ? #f3f5f8 : #182236;
-                    font-family: "Microsoft YaHei UI";
-                    font-size: 25 * root.layout-scale * 1px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
+                ActionButton { label: "设置"; dark: root.dark; font-scale: root.layout-scale; clicked => { root.settings-requested(); } }
             }
-
-            if recovering: HorizontalLayout {
-                spacing: 7 * root.layout-scale * 1px;
-                height: 36 * root.layout-scale * 1px;
-                ActionButton { label: "继续"; primary: true; dark: root.dark; font-scale: root.layout-scale; clicked => { root.recovery-continue-requested(); } }
-                ActionButton { label: "保持暂停"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.recovery-pause-requested(); } }
-            }
-            if !recovering: ActionButton {
-                height: 38 * root.layout-scale * 1px;
-                label: root.completed ? "下一段" : (root.running ? "暂停" : (root.paused ? "继续" : "开始"));
-                primary: true;
-                dark: root.dark;
-                font-scale: root.layout-scale;
-                clicked => {
-                    if (root.completed) { root.next-requested(); }
-                    else if (root.running) { root.pause-requested(); }
-                    else if (root.paused) { root.resume-requested(); }
-                    else { root.start-requested(); }
-                }
-            }
-            if recovering: ActionButton {
-                label: "放弃本段"; primary: false; dark: root.dark; font-scale: root.layout-scale;
-                height: 34 * root.layout-scale * 1px;
-                clicked => { root.recovery-discard-requested(); }
-            }
-            if !recovering: HorizontalLayout {
-                spacing: 7 * root.layout-scale * 1px;
-                height: 34 * root.layout-scale * 1px;
-                ActionButton { label: "提前结束"; primary: false; dark: root.dark; font-scale: root.layout-scale; enabled: root.running || root.paused; clicked => { root.end-requested(); } }
-                ActionButton { label: "设置"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.settings-requested(); } }
-            }
-            if root.feedback != "": Text {
+            if root.expanded && root.feedback != "": Text {
                 text: root.feedback;
                 color: dark ? #ffb4bd : #b42335;
                 font-family: "Microsoft YaHei UI";
@@ -230,185 +312,68 @@ export component PomodoroWindow inherits Window {
                 vertical-alignment: center;
                 height: 32 * root.layout-scale * 1px;
             }
-            HorizontalLayout {
-                spacing: 5 * root.layout-scale * 1px;
-                height: 34 * root.layout-scale * 1px;
-                ActionButton { label: "关于"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.about-requested(); } }
-                ActionButton { label: "收起"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.toggle-requested(); } }
-                ActionButton { label: "退出"; primary: false; dark: root.dark; font-scale: root.layout-scale; clicked => { root.exit-requested(); } }
+            if root.expanded: ActionButton {
+                label: "退出";
+                dark: root.dark;
+                font-scale: root.layout-scale;
+                height: 24 * root.layout-scale * 1px;
+                clicked => { root.exit-requested(); }
             }
         }
 
-        if !expanded: WindowMoveArea {
-            Rectangle {
-                width: expand-button.x + expand-button.width;
-                height: parent.height;
-                x: (parent.width - self.width) / 2;
-
-                compact-ring := ProgressRing {
-                    x: 0px;
-                    y: (parent.height - self.height) / 2;
-                    progress: root.progress;
-                    dark: root.dark;
-                    compact: true;
-                    layout-scale: root.layout-scale;
-                    accent: root.accent;
-                    progress-path: root.progress-path;
-                }
-                compact-time := Text {
-                    x: compact-ring.width + 7 * root.layout-scale * 1px;
-                    y: (parent.height - self.height) / 2;
-                    width: 66 * root.layout-scale * 1px;
-                    height: expand-button.height;
-                    text: root.time-label;
+        if root.page == 1: VerticalLayout {
+            padding: 9 * root.layout-scale * 1px;
+            spacing: 6 * root.layout-scale * 1px;
+            WindowMoveArea {
+                height: 22 * root.layout-scale * 1px;
+                Text {
+                    text: "设置";
                     color: dark ? #f3f5f8 : #182236;
-                    font-family: "Microsoft YaHei UI";
-                    accessible-label: root.phase-title + "，剩余时间，" + root.time-label;
-                    font-size: 19 * root.layout-scale * 1px;
+                    font-size: 16 * root.layout-scale * 1px;
                     font-weight: 700;
-                    horizontal-alignment: center;
                     vertical-alignment: center;
                 }
-                expand-button := ActionButton {
-                    x: compact-time.x + compact-time.width + 7 * root.layout-scale * 1px;
-                    y: (parent.height - self.height) / 2;
-                    width: 44 * root.layout-scale * 1px;
-                    height: 38 * root.layout-scale * 1px;
-                    label: "展开";
-                    dark: root.dark;
-                    font-scale: root.layout-scale;
-                    clicked => { root.toggle-requested(); }
+            }
+            SettingRow { dark: root.dark; scale: root.layout-scale; title: "专注"; value: root.draft-focus; suffix: "分"; decrement => { root.draft-focus = max(1, root.draft-focus - 1); } increment => { root.draft-focus = min(180, root.draft-focus + 1); } }
+            SettingRow { dark: root.dark; scale: root.layout-scale; title: "短休"; value: root.draft-short; suffix: "分"; decrement => { root.draft-short = max(1, root.draft-short - 1); } increment => { root.draft-short = min(60, root.draft-short + 1); } }
+            SettingRow { dark: root.dark; scale: root.layout-scale; title: "长休"; value: root.draft-long; suffix: "分"; decrement => { root.draft-long = max(1, root.draft-long - 1); } increment => { root.draft-long = min(120, root.draft-long + 1); } }
+            SettingRow { dark: root.dark; scale: root.layout-scale; title: "长休间隔"; value: root.draft-rounds; suffix: "轮"; decrement => { root.draft-rounds = max(1, root.draft-rounds - 1); } increment => { root.draft-rounds = min(12, root.draft-rounds + 1); } }
+            Switch { text: "窗口置顶"; checked <=> root.draft-topmost; height: 26 * root.layout-scale * 1px; }
+            if root.feedback != "": Text {
+                text: root.feedback;
+                color: dark ? #ffb4bd : #b42335;
+                font-size: 12 * root.layout-scale * 1px;
+                wrap: word-wrap;
+                height: 32 * root.layout-scale * 1px;
+            }
+            HorizontalLayout {
+                height: 28 * root.layout-scale * 1px;
+                spacing: 6 * root.layout-scale * 1px;
+                ActionButton {
+                    label: "保存"; primary: true; dark: root.dark; font-scale: root.layout-scale;
+                    clicked => { root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds, root.draft-topmost); }
+                }
+                ActionButton { label: "取消"; dark: root.dark; font-scale: root.layout-scale; clicked => { root.cancel-requested(); } }
+            }
+            ActionButton { label: "关于"; dark: root.dark; font-scale: root.layout-scale; height: 24 * root.layout-scale * 1px; clicked => { root.page-requested(2); } }
+        }
+
+        if root.page == 2: VerticalLayout {
+            padding: 9 * root.layout-scale * 1px;
+            spacing: 6 * root.layout-scale * 1px;
+            WindowMoveArea {
+                height: 23 * root.layout-scale * 1px;
+                Text {
+                    text: "关于番茄钟";
+                    color: dark ? #f3f5f8 : #182236;
+                    font-size: 16 * root.layout-scale * 1px;
+                    font-weight: 700;
+                    vertical-alignment: center;
                 }
             }
-        }
-    }
-}
-
-component SettingRow inherits Rectangle {
-    in-out property <bool> dark;
-    in-out property <string> title;
-    in-out property <int> value;
-    in-out property <string> suffix;
-    callback decrement();
-    callback increment();
-    height: 38px;
-    background: transparent;
-    HorizontalLayout {
-        spacing: 5px;
-        Text {
-            text: root.title;
-            color: root.dark ? #f3f5f8 : #182236;
-            font-family: "Microsoft YaHei UI";
-            font-size: 13px;
-            vertical-alignment: center;
-            width: 64px;
-        }
-        ActionButton { label: "−"; primary: false; dark: root.dark; width: 30px; height: 32px; clicked => { root.decrement(); } }
-        Text {
-            text: root.value + " " + root.suffix;
-            color: root.dark ? #f3f5f8 : #182236;
-            font-family: "Microsoft YaHei UI";
-            font-size: 13px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            width: 74px;
-        }
-        ActionButton { label: "+"; primary: false; dark: root.dark; width: 30px; height: 32px; clicked => { root.increment(); } }
-    }
-}
-
-export component SettingsWindow inherits Window {
-    in-out property <bool> dark;
-    in property <bool> keep-on-top;
-    always-on-top: root.keep-on-top;
-    in-out property <int> focus-minutes: 25;
-    in-out property <int> short-minutes: 5;
-    in-out property <int> long-minutes: 15;
-    in-out property <int> rounds: 4;
-    in-out property <int> draft-focus: root.focus-minutes;
-    in-out property <int> draft-short: root.short-minutes;
-    in-out property <int> draft-long: root.long-minutes;
-    in-out property <int> draft-rounds: root.rounds;
-    in-out property <bool> draft-topmost;
-    callback focus-delta(int);
-    callback short-delta(int);
-    callback long-delta(int);
-    callback rounds-delta(int);
-    callback close-requested();
-    callback save-requested(int, int, int, int, bool);
-    callback cancel-requested();
-
-    no-frame: true;
-    width: 248px;
-    height: 390px;
-    background: transparent;
-
-    Rectangle {
-        background: dark ? #171b24 : #ffffff;
-        border-color: dark ? #394152 : #cbd3df;
-        border-width: 1px;
-        border-radius: 14px;
-        VerticalLayout {
-            padding: 14px;
-            spacing: 10px;
-            Text {
-                text: "计时设置";
-                color: dark ? #f3f5f8 : #182236;
-                font-family: "Microsoft YaHei UI";
-                font-size: 18px;
-                font-weight: 700;
-                height: 26px;
-            }
-            SettingRow { dark: root.dark; title: "专注"; value: root.draft-focus; suffix: "分钟"; decrement => { root.draft-focus = max(1, root.draft-focus - 1); } increment => { root.draft-focus = min(180, root.draft-focus + 1); } }
-            SettingRow { dark: root.dark; title: "短休"; value: root.draft-short; suffix: "分钟"; decrement => { root.draft-short = max(1, root.draft-short - 1); } increment => { root.draft-short = min(60, root.draft-short + 1); } }
-            SettingRow { dark: root.dark; title: "长休"; value: root.draft-long; suffix: "分钟"; decrement => { root.draft-long = max(1, root.draft-long - 1); } increment => { root.draft-long = min(120, root.draft-long + 1); } }
-            SettingRow { dark: root.dark; title: "长休间隔"; value: root.draft-rounds; suffix: "轮"; decrement => { root.draft-rounds = max(1, root.draft-rounds - 1); } increment => { root.draft-rounds = min(12, root.draft-rounds + 1); } }
-            Switch {
-                text: "窗口置顶";
-                checked <=> root.draft-topmost;
-                height: 30px;
-            }
-            ActionButton {
-                label: "保存";
-                primary: true;
-                dark: root.dark;
-                height: 38px;
-                clicked => {
-                    root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds, root.draft-topmost);
-                }
-            }
-            ActionButton {
-                label: "取消";
-                primary: false;
-                dark: root.dark;
-                height: 32px;
-                clicked => { root.cancel-requested(); }
-            }
-        }
-    }
-}
-
-export component AboutWindow inherits Window {
-    in-out property <bool> dark;
-    in property <bool> keep-on-top;
-    always-on-top: root.keep-on-top;
-    callback close-requested();
-    no-frame: true;
-    width: 248px;
-    height: 170px;
-    background: transparent;
-    Rectangle {
-        background: dark ? #171b24 : #ffffff;
-        border-color: dark ? #394152 : #cbd3df;
-        border-width: 1px;
-        border-radius: 14px;
-        VerticalLayout {
-            padding: 16px;
-            spacing: 9px;
-            Text { text: "番茄钟"; color: dark ? #f3f5f8 : #182236; font-family: "Microsoft YaHei UI"; font-size: 18px; font-weight: 700; height: 24px; }
-            Text { text: "界面由 Slint 支持 · Slint 1.19"; color: dark ? #b4bdcc : #596579; font-family: "Microsoft YaHei UI"; font-size: 13px; height: 20px; }
-            Text { text: "slint.dev"; color: dark ? #91a7ff : #4263eb; font-family: "Microsoft YaHei UI"; font-size: 13px; height: 20px; }
-            ActionButton { label: "关闭"; primary: true; dark: root.dark; height: 36px; clicked => { root.close-requested(); } }
+            Text { text: "界面由 Slint 支持 · Slint 1.19"; color: dark ? #b4bdcc : #596579; font-size: 12 * root.layout-scale * 1px; height: 19 * root.layout-scale * 1px; }
+            Text { text: "slint.dev"; color: dark ? #91a7ff : #4263eb; font-size: 12 * root.layout-scale * 1px; height: 18 * root.layout-scale * 1px; }
+            ActionButton { label: "返回设置"; primary: true; dark: root.dark; font-scale: root.layout-scale; height: 30 * root.layout-scale * 1px; clicked => { root.page-requested(1); } }
         }
     }
 }
