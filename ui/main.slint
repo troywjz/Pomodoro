@@ -1,4 +1,4 @@
-import { Switch } from "std-widgets.slint";
+import { ComboBox, Switch } from "std-widgets.slint";
 
 component ActionButton inherits Rectangle {
     in-out property <string> label;
@@ -152,14 +152,20 @@ export component PomodoroWindow inherits Window {
     always-on-top: root.keep-on-top;
     in-out property <length> target-width: 192px;
     in-out property <int> page: 0;
-    out property <length> target-height: (page == 1 ? (feedback == "" ? 263 : 301)
-        : page == 2 ? 134 : (expanded ? (feedback == "" ? 164 : 202) : 72))
+    out property <length> target-height: (page == 1 ? (feedback == "" ? 329 : 367)
+        : page == 2 ? 134 : (expanded ? (feedback == "" ? 164 : 202) : 72)
+            + (show-wall-clock ? 22 : 0))
         * root.layout-scale * 1px;
     in-out property <int> draft-focus: 25;
     in-out property <int> draft-short: 5;
     in-out property <int> draft-long: 15;
     in-out property <int> draft-rounds: 4;
     in-out property <bool> draft-topmost;
+    in-out property <bool> draft-show-wall-clock;
+    in-out property <int> draft-wall-clock-zone;
+    in property <bool> show-wall-clock;
+    in property <string> wall-clock-label;
+    in property <[string]> wall-clock-zones;
     in-out property <string> progress-path: "M 26 2 A 24 24 0 1 1 26 50 A 24 24 0 1 1 26 2";
     in-out property <bool> dark;
     in-out property <bool> expanded: true;
@@ -187,7 +193,7 @@ export component PomodoroWindow inherits Window {
     callback toggle-requested();
     callback settings-requested();
     callback page-requested(int);
-    callback save-requested(int, int, int, int, bool);
+    callback save-requested(int, int, int, int, bool, bool, int);
     callback cancel-requested();
     callback exit-requested();
 
@@ -209,6 +215,15 @@ export component PomodoroWindow inherits Window {
         if root.page == 0: VerticalLayout {
             padding: 9 * root.layout-scale * 1px;
             spacing: 6 * root.layout-scale * 1px;
+
+            if root.show-wall-clock: Text {
+                text: root.wall-clock-label;
+                color: root.dark ? #f3f5f8 : #182236;
+                font-size: 11 * root.layout-scale * 1px;
+                height: 16 * root.layout-scale * 1px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
 
             HorizontalLayout {
                 spacing: 8 * root.layout-scale * 1px;
@@ -339,6 +354,23 @@ export component PomodoroWindow inherits Window {
             SettingRow { dark: root.dark; scale: root.layout-scale; title: "长休"; value: root.draft-long; suffix: "分"; decrement => { root.draft-long = max(1, root.draft-long - 1); } increment => { root.draft-long = min(120, root.draft-long + 1); } }
             SettingRow { dark: root.dark; scale: root.layout-scale; title: "长休间隔"; value: root.draft-rounds; suffix: "轮"; decrement => { root.draft-rounds = max(1, root.draft-rounds - 1); } increment => { root.draft-rounds = min(12, root.draft-rounds + 1); } }
             Switch { text: "窗口置顶"; checked <=> root.draft-topmost; height: 26 * root.layout-scale * 1px; }
+            Switch { text: "显示当前时间"; checked <=> root.draft-show-wall-clock; height: 26 * root.layout-scale * 1px; }
+            HorizontalLayout {
+                spacing: 6 * root.layout-scale * 1px;
+                height: 28 * root.layout-scale * 1px;
+                Text {
+                    text: "时区";
+                    color: root.dark ? #f3f5f8 : #182236;
+                    font-size: 13 * root.layout-scale * 1px;
+                    vertical-alignment: center;
+                }
+                ComboBox {
+                    model: root.wall-clock-zones;
+                    current-index <=> root.draft-wall-clock-zone;
+                    accessible-label: "时区";
+                    horizontal-stretch: 1;
+                }
+            }
             if root.feedback != "": Text {
                 text: root.feedback;
                 color: dark ? #ffb4bd : #b42335;
@@ -351,7 +383,7 @@ export component PomodoroWindow inherits Window {
                 spacing: 6 * root.layout-scale * 1px;
                 ActionButton {
                     label: "保存"; primary: true; dark: root.dark; font-scale: root.layout-scale;
-                    clicked => { root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds, root.draft-topmost); }
+                    clicked => { root.save-requested(root.draft-focus, root.draft-short, root.draft-long, root.draft-rounds, root.draft-topmost, root.draft-show-wall-clock, root.draft-wall-clock-zone); }
                 }
                 ActionButton { label: "取消"; dark: root.dark; font-scale: root.layout-scale; clicked => { root.cancel-requested(); } }
             }

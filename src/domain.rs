@@ -28,6 +28,12 @@ impl Phase {
     }
 }
 
+pub const CLOCK_UTC_OFFSETS: &[i32] = &[
+    -720, -660, -600, -570, -540, -480, -420, -360, -300, -240, -210, -180, -120, -60, 0, 60, 120,
+    180, 210, 240, 270, 300, 330, 345, 360, 390, 420, 480, 525, 540, 570, 600, 630, 660, 720, 765,
+    780, 825, 840,
+];
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TimerSettings {
     pub focus_minutes: u32,
@@ -36,6 +42,10 @@ pub struct TimerSettings {
     pub rounds_until_long_break: u8,
     #[serde(default)]
     pub topmost: bool,
+    #[serde(default)]
+    pub show_wall_clock: bool,
+    #[serde(default)]
+    pub wall_clock_offset_minutes: i32,
 }
 
 impl Default for TimerSettings {
@@ -46,6 +56,8 @@ impl Default for TimerSettings {
             long_break_minutes: 15,
             rounds_until_long_break: 4,
             topmost: false,
+            show_wall_clock: false,
+            wall_clock_offset_minutes: 0,
         }
     }
 }
@@ -65,6 +77,7 @@ impl TimerSettings {
             || !(1..=60).contains(&self.short_break_minutes)
             || !(1..=120).contains(&self.long_break_minutes)
             || !(1..=12).contains(&self.rounds_until_long_break)
+            || !CLOCK_UTC_OFFSETS.contains(&self.wall_clock_offset_minutes)
         {
             return Err(TimerError::InvalidSettings);
         }
