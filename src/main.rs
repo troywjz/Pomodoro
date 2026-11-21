@@ -98,6 +98,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dark = Rc::new(Cell::new(platform::system_prefers_dark_theme()));
 
     let main_window = PomodoroWindow::new()?;
+    #[cfg(windows)]
+    connect_window_drag(&main_window);
     let zones: Vec<_> = CLOCK_UTC_OFFSETS
         .iter()
         .copied()
@@ -303,6 +305,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     main_window.show()?;
     main_window.run()?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn connect_window_drag(window: &PomodoroWindow) {
+    let anchor = Rc::new(Cell::new((0, 0)));
+    let weak = window.as_weak();
+    let start_anchor = anchor.clone();
+    window.set_use_pointer_drag(true);
+    window.on_drag_started(move |x, y| {
+        if let Some(window) = weak.upgrade() {
+            let scale = window.window().scale_factor();
+            start_anchor.set(((x * scale).round() as i32, (y * scale).round() as i32));
+        }
+    });
+    let weak = window.as_weak();
+    window.on_drag_moved(move || {
+        if let Some(window) = weak.upgrade() {
+            let (x, y) = anchor.get();
+            platform::move_window_with_pointer(window.window(), x, y);
+        }
+    });
 }
 
 fn connect_settings(

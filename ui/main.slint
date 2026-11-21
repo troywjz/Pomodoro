@@ -48,8 +48,8 @@ component ActionButton inherits Rectangle {
     }
 
     TouchArea {
-        enabled: parent.enabled;
-        clicked => { parent.clicked(); }
+        // Disabled buttons still reserve their hit area from the window drag layer.
+        clicked => { if (root.enabled) { root.clicked(); } }
     }
     button-focus := FocusScope {
         x: 0px;
@@ -196,11 +196,32 @@ export component PomodoroWindow inherits Window {
     callback save-requested(int, int, int, int, bool, bool, int);
     callback cancel-requested();
     callback exit-requested();
+    in property <bool> use-pointer-drag;
+    callback drag-started(float, float);
+    callback drag-moved();
 
     no-frame: true;
     width: target-width;
     height: target-height;
     background: transparent;
+
+    // Controls above this area get first chance to handle pointer events.
+    if !root.use-pointer-drag: WindowMoveArea {
+        width: parent.width;
+        height: parent.height;
+    }
+    if root.use-pointer-drag: TouchArea {
+        width: parent.width;
+        height: parent.height;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.drag-started(self.pressed-x / 1px, self.pressed-y / 1px);
+            }
+        }
+        moved => {
+            if (self.pressed) { root.drag-moved(); }
+        }
+    }
 
     Rectangle {
         x: 1px;
@@ -260,7 +281,7 @@ export component PomodoroWindow inherits Window {
                         }
                     }
                 }
-                WindowMoveArea {
+                Rectangle {
                     min-width: 72 * root.layout-scale * 1px;
                     max-width: self.min-width;
                     Text {
@@ -290,7 +311,7 @@ export component PomodoroWindow inherits Window {
                 }
             }
 
-            if root.expanded: WindowMoveArea {
+            if root.expanded: Rectangle {
                 height: 20 * root.layout-scale * 1px;
                 Text {
                     text: root.phase-title + "  ·  " + (root.recovering ? "待恢复" : root.round-label);
@@ -339,7 +360,7 @@ export component PomodoroWindow inherits Window {
         if root.page == 1: VerticalLayout {
             padding: 9 * root.layout-scale * 1px;
             spacing: 6 * root.layout-scale * 1px;
-            WindowMoveArea {
+            Rectangle {
                 height: 22 * root.layout-scale * 1px;
                 Text {
                     text: "设置";
@@ -393,7 +414,7 @@ export component PomodoroWindow inherits Window {
         if root.page == 2: VerticalLayout {
             padding: 9 * root.layout-scale * 1px;
             spacing: 6 * root.layout-scale * 1px;
-            WindowMoveArea {
+            Rectangle {
                 height: 23 * root.layout-scale * 1px;
                 Text {
                     text: "关于番茄钟";
