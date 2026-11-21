@@ -4,7 +4,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[下载 Pomodoro v0.2.1 Windows x64 版本](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.1)
+[下载 Pomodoro v0.2.2 Windows x64 版本](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.2)
 
 ## 功能
 
@@ -15,13 +15,13 @@
 
 ## 安装与运行
 
-1. 从 [v0.2.1 Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.1) 下载并解压 `Pomodoro-v0.2.1-windows-x64.zip`。
+1. 从 [v0.2.2 Release](https://github.com/troywjz/Pomodoro/releases/tag/v0.2.2) 下载并解压 `Pomodoro-v0.2.2-windows-x64.zip`。
 2. 双击 `Pomodoro.exe`。
 3. 如果 Windows 提示缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll`，请安装微软的 [Visual C++ x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)，再重新打开程序。
 
 窗口采用无边框设计。点击圆环中心的图标开始、暂停、继续计时或进入下一段。展开和收起共用同一位置的箭头图标，拖动时间数字可以移动窗口。恢复启动后，计时保持暂停，等待你继续或放弃本段。「设置」在当前窗口打开，「关于」位于设置页。点击「保存」应用设置，点击「取消」放弃更改。点击「退出」或按 Alt+F4 会在关闭前保存计时。
 
-从当前源码构建的版本可在「设置」中打开「显示当前时间」，并选择固定 UTC 偏移。点击「保存」后，两项设置会在重启后保留。固定偏移全年保持一致。
+可在「设置」中打开「显示当前时间」，并选择固定 UTC 偏移。点击「保存」后，两项设置会在重启后保留。固定偏移全年保持一致。
 
 ## 数据与自动备份
 
@@ -52,7 +52,7 @@ JSON 导出包含一致性读取到的计时状态、当前和历史设置、会
 
 ## 从源码构建
 
-安装 Rust 1.100.0 MSVC 工具链和 Visual Studio C++ Build Tools，然后运行：
+安装 Rust 1.100.0 MSVC 工具链、Visual Studio C++ Build Tools 和 Windows SDK。在可调用 SDK 资源编译器 `rc.exe` 的开发者终端运行：
 
 ```powershell
 cargo run --locked
